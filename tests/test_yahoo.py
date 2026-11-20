@@ -12,6 +12,7 @@ from mktpulse.sources.yahoo import YahooClient, YahooError
 from mktpulse.storage.local import LocalStorage
 from tests.conftest import FIXED_NOW, epoch
 
+
 def yahoo_payload(symbol: str = "PETR4.SA") -> dict[str, Any]:
     days = [date(2026, 1, 2), date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 7)]
 
@@ -39,6 +40,7 @@ def yahoo_payload(symbol: str = "PETR4.SA") -> dict[str, Any]:
         }
     }
 
+
 class FakeResponse:
     def __init__(self, status_code: int, payload: Any) -> None:
         self.status_code = status_code
@@ -46,6 +48,7 @@ class FakeResponse:
 
     def json(self) -> Any:
         return self._payload
+
 
 class FakeSession:
     def __init__(self, response: FakeResponse) -> None:
@@ -55,6 +58,7 @@ class FakeSession:
     def get(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
         return self.response
+
 
 def test_yahoo_client_appends_sa_suffix_and_returns_mapping() -> None:
     session = FakeSession(FakeResponse(200, yahoo_payload()))
@@ -68,20 +72,26 @@ def test_yahoo_client_appends_sa_suffix_and_returns_mapping() -> None:
     assert call["params"]["range"] == "1y"
     assert call["params"]["includePrePost"] == "false"
 
+
 def test_yahoo_client_maps_http_error() -> None:
-    session = FakeSession(FakeResponse(404, {"chart": {"result": None, "error": {"description": "No data found"}}}))
+    session = FakeSession(
+        FakeResponse(404, {"chart": {"result": None, "error": {"description": "No data found"}}})
+    )
     client = YahooClient(session=session)
 
     with pytest.raises(YahooError, match="No data found"):
         client.fetch_quotes(["XXXX"])
 
+
 def test_yahoo_normalization_skips_incomplete_bars() -> None:
-    envelope = build_envelope(source="yahoo",
-                              run_id="run-1",
-                              symbol="PETR4",
-                              request={"range": "1y", "interval": "1d"},
-                              payload=yahoo_payload(),
-                              ingested_at=datetime(2026, 11, 17, 18, 0, tzinfo=UTC))
+    envelope = build_envelope(
+        source="yahoo",
+        run_id="run-1",
+        symbol="PETR4",
+        request={"range": "1y", "interval": "1d"},
+        payload=yahoo_payload(),
+        ingested_at=datetime(2026, 11, 17, 18, 0, tzinfo=UTC),
+    )
 
     frame = normalize_envelope(envelope)
 
@@ -92,17 +102,23 @@ def test_yahoo_normalization_skips_incomplete_bars() -> None:
     assert frame.loc[0, "adjusted_close"] == 10.2
     assert frame.loc[0, "source"] == "yahoo"
 
+
 class FakeYahooSource:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
 
-    def fetch_quotes(self, symbols: list[str], *, range_: str = "1y", interval: str = "1d") -> dict[str, dict[str, Any]]:
+    def fetch_quotes(
+        self, symbols: list[str], *, range_: str = "1y", interval: str = "1d"
+    ) -> dict[str, dict[str, Any]]:
         return {symbol: self.payload for symbol in symbols}
+
 
 def test_yahoo_pipeline_keeps_source_in_lake_paths(settings) -> None:
     yahoo_settings = settings.model_copy(update={"source": "yahoo"})
     storage = LocalStorage(yahoo_settings.lake_root)
-    pipeline = IngestionPipeline(yahoo_settings, FakeYahooSource(yahoo_payload()), storage, now=lambda: FIXED_NOW)
+    pipeline = IngestionPipeline(
+        yahoo_settings, FakeYahooSource(yahoo_payload()), storage, now=lambda: FIXED_NOW
+    )
 
     summary = pipeline.ingest(["PETR4"], run_id="run-1")
 

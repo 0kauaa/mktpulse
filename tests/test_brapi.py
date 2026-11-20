@@ -7,6 +7,7 @@ import pytest
 from mktpulse.sources.brapi import BrapiClient, BrapiError
 from tests.conftest import make_result
 
+
 class FakeResponse:
     def __init__(self, status_code: int, payload: Any) -> None:
         self.status_code = status_code
@@ -14,6 +15,7 @@ class FakeResponse:
 
     def json(self) -> Any:
         return self._payload
+
 
 class FakeSession:
     def __init__(self, response: FakeResponse) -> None:
@@ -23,6 +25,7 @@ class FakeSession:
     def get(self, url: str, **kwargs: Any) -> FakeResponse:
         self.calls.append({"url": url, **kwargs})
         return self.response
+
 
 def test_fetch_quotes_builds_request_without_leaking_token() -> None:
     session = FakeSession(FakeResponse(200, {"results": [make_result()]}))
@@ -36,6 +39,7 @@ def test_fetch_quotes_builds_request_without_leaking_token() -> None:
     assert call["params"] == {"range": "3mo", "interval": "1d", "token": "super-secret"}
     assert "super-secret" not in call["url"]
     assert call["timeout"] == 30.0
+
 
 def test_http_error_is_mapped_without_token_in_message() -> None:
     session = FakeSession(
@@ -57,12 +61,14 @@ def test_http_error_is_mapped_without_token_in_message() -> None:
     assert error.value.code == "MISSING_TOKEN"
     assert "super-secret" not in str(error.value)
 
+
 def test_invalid_shape_is_rejected() -> None:
     session = FakeSession(FakeResponse(200, {"results": "not-a-list"}))
     client = BrapiClient(session=session)
 
     with pytest.raises(BrapiError, match="results"):
         client.fetch_quotes(["PETR4"])
+
 
 def test_empty_symbols_is_rejected() -> None:
     client = BrapiClient(session=FakeSession(FakeResponse(200, {"results": []})))

@@ -20,16 +20,30 @@ from urllib3.util.retry import Retry
 
 DEFAULT_USER_AGENT = "mktpulse/0.1 (data engineering study project)"
 
+
 class BrapiError(RuntimeError):
-    def __init__(self, message: str, *, status_code: int | None = None, code: str | None = None,) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.code = code
 
+
 class BrapiClient:
-    def __init__(self, base_url: str = "https://brapi.dev/api", *,
-                 token: str | None = None, timeout_seconds: float = 30.0,
-                 max_retries: int = 5, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        base_url: str = "https://brapi.dev/api",
+        *,
+        token: str | None = None,
+        timeout_seconds: float = 30.0,
+        max_retries: int = 5,
+        session: requests.Session | None = None,
+    ) -> None:
 
         self._base_url = base_url.rstrip("/")
         self._token = token
@@ -38,15 +52,17 @@ class BrapiClient:
 
     @staticmethod
     def _build_session(max_retries: int) -> requests.Session:
-        retry = Retry(total=max_retries,
-                      connect=max_retries,
-                      read=max_retries,
-                      status=max_retries,
-                      backoff_factor=1.0,
-                      status_forcelist=(429, 500, 502, 503, 504),
-                      allowed_methods=frozenset({"GET"}),
-                      respect_retry_after_header=True,
-                      raise_on_status=False)
+        retry = Retry(
+            total=max_retries,
+            connect=max_retries,
+            read=max_retries,
+            status=max_retries,
+            backoff_factor=1.0,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset({"GET"}),
+            respect_retry_after_header=True,
+            raise_on_status=False,
+        )
 
         adapter = HTTPAdapter(max_retries=retry)
         session = requests.Session()
@@ -54,7 +70,9 @@ class BrapiClient:
         session.mount("http://", adapter)
         return session
 
-    def fetch_quotes(self, symbols: Sequence[str], *, range_: str = "1y", interval: str = "1d") -> dict[str, dict[str, Any]]:
+    def fetch_quotes(
+        self, symbols: Sequence[str], *, range_: str = "1y", interval: str = "1d"
+    ) -> dict[str, dict[str, Any]]:
         """Retorna {ticker: payload bruto do ticker}."""
 
         tickers = [symbol.strip().upper() for symbol in symbols if symbol.strip()]
@@ -66,7 +84,12 @@ class BrapiClient:
         if self._token:
             params["token"] = self._token
 
-        response = self._session.get(url, params=params, timeout=self._timeout, headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"})
+        response = self._session.get(
+            url,
+            params=params,
+            timeout=self._timeout,
+            headers={"User-Agent": DEFAULT_USER_AGENT, "Accept": "application/json"},
+        )
 
         data: dict[str, Any] = {}
         if response.status_code >= 400:
@@ -80,7 +103,11 @@ class BrapiClient:
             hint = ""
             if code == "MISSING_TOKEN":
                 hint = " (reduza o lote ou configure MKT_BRAPI_TOKEN)"
-            raise BrapiError(f"brapi falhou com HTTP {response.status_code}: {message}{hint}", status_code=response.status_code, code=code)
+            raise BrapiError(
+                f"brapi falhou com HTTP {response.status_code}: {message}{hint}",
+                status_code=response.status_code,
+                code=code,
+            )
 
         try:
             body = response.json()
@@ -90,7 +117,9 @@ class BrapiClient:
             raise BrapiError("brapi retornou um JSON inesperado")
 
         if body.get("error"):
-            raise BrapiError(f"brapi retornou erro: {body.get('message', 'sem mensagem')}", code=body.get("code"))
+            raise BrapiError(
+                f"brapi retornou erro: {body.get('message', 'sem mensagem')}", code=body.get("code")
+            )
         if not isinstance(body.get("results"), list):
             raise BrapiError("resposta da brapi sem a lista 'results'")
         return {
