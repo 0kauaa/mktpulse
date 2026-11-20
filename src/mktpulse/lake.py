@@ -21,12 +21,17 @@ import gzip
 import hashlib
 import json
 import math
+import uuid
 from datetime import UTC, date, datetime
 from typing import Any
 
 RAW_ROOT = "raw"
 NORMALIZED_ROOT = "normalized"
+SILVER_ROOT = "silver"
+GOLD_ROOT = "gold"
 OPS_ROOT = "_ops/runs"
+BENCHMARK_ROOT = "_ops/benchmarks"
+MODEL_ROOT = "_ops/models"
 SCHEMA_VERSION = 1
 
 
@@ -58,8 +63,32 @@ def normalized_key(source: str, symbol: str) -> str:
     return f"{normalized_prefix(source)}symbol={symbol}/quotes.parquet"
 
 
+def silver_prefix(source: str) -> str:
+    return f"{SILVER_ROOT}/source={source}/table=quotes/"
+
+
+def gold_prefix(source: str) -> str:
+    return f"{GOLD_ROOT}/source={source}/table=anomalies/"
+
+
+def model_key(run_id: str, name: str = "model.joblib") -> str:
+    return f"{MODEL_ROOT}/run_id={run_id}/{name}"
+
+
 def manifest_key(run_id: str, landing_date: str) -> str:
     return f"{OPS_ROOT}/ingestion_date={landing_date}/run_id={run_id}/manifest.json"
+
+
+def run_artifact_key(run_id: str, landing_date: str, name: str) -> str:
+    return f"{OPS_ROOT}/ingestion_date={landing_date}/run_id={run_id}/{name}"
+
+
+def benchmark_key(run_id: str) -> str:
+    return f"{BENCHMARK_ROOT}/run_id={run_id}/benchmark.json"
+
+
+def new_run_id(moment: datetime) -> str:
+    return f"{moment.astimezone(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
 
 
 def canonical_json(value: Any) -> bytes:

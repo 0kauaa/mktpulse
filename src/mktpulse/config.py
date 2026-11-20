@@ -40,6 +40,18 @@ class Settings(BaseSettings):
     request_timeout_seconds: float = Field(default=30.0, gt=0)
     max_retries: int = Field(default=5, ge=0)
 
+    spark_master: str = "local[2]"
+    spark_shuffle_partitions: int = Field(default=8, ge=1)
+    quality_max_daily_return: float = Field(default=0.25, gt=0)
+    quality_max_gap_days: int = Field(default=5, ge=1)
+    quality_max_staleness_days: int = Field(default=5, ge=1)
+
+    anomaly_contamination: float = Field(default=0.02, gt=0, lt=0.5)
+    anomaly_n_estimators: int = Field(default=200, ge=10)
+    anomaly_random_state: int = 42
+    anomaly_train_fraction: float = Field(default=1.0, gt=0, le=1)
+    anomaly_min_training_rows: int = Field(default=200, ge=20)
+
     symbols: str = "PETR4,VALE3,ITUB4,BBDC4,BBAS3,ABEV3,WEGE3,MGLU3"
     log_level: str = "INFO"
 

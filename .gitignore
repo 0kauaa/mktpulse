@@ -10,3 +10,6 @@ build/
 dist/
 data/
 projeto/
+spark-warehouse/
+metastore_db/
+derby.log
