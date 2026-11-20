@@ -16,9 +16,13 @@ import logging
 import sys
 from typing import Any
 
+from .anomaly import AnomalyJob, AnomalySummary
+from .benchmark import run_benchmark
 from .config import Settings, get_settings
+from .lake import benchmark_key, new_run_id, utc_now
 from .observability import setup_logging
 from .pipeline import IngestionPipeline, RunSummary, read_snapshot
+from .silver import SilverJob, SilverSummary
 from .sources import create_quote_source
 from .storage import create_storage
 
@@ -30,7 +34,7 @@ EXIT_CODES = {"success": 0, "partial": 1, "failed": 2}
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="mktpulse",
-        description="Pipeline de dados OHLCV da B3 (Semana 1: ingestao e armazenamento).",
+        description="Pipeline de dados OHLCV da B3 (ingestao, silver, qualidade e anomalias).",
     )
     parser.add_argument("--log-level", default=None, help="DEBUG, INFO, WARNING...")
     parser.add_argument("--json", action="store_true", help="imprime o resumo em JSON")
@@ -53,6 +57,32 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbols", default=None, help="padrao: descobre todos os simbolos no raw"
     )
     rebuild.add_argument("--run-id", default=None)
+
+    transform = subparsers.add_parser("transform", help="constroi a camada silver com PySpark")
+    transform.add_argument("--symbols", default=None, help="padrao: todos no normalized")
+    transform.add_argument("--run-id", default=None)
+    transform.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="apaga o silver antes de escrever (rebuild completo)",
+    )
+    transform.add_argument("--master", default=None, help="ex.: local[2]")
+    transform.add_argument("--shuffle-partitions", type=int, default=None)
+
+    benchmark = subparsers.add_parser(
+        "benchmark", help="compara Pandas e Spark com dados sinteticos"
+    )
+    benchmark.add_argument("--rows", type=int, default=250_000)
+    benchmark.add_argument("--symbol-count", type=int, default=8)
+    benchmark.add_argument("--shuffle-partitions", type=int, default=None)
+    benchmark.add_argument("--run-id", default=None)
+
+    detect = subparsers.add_parser("detect", help="detecta anomalias com Isolation Forest")
+    detect.add_argument("--symbols", default=None, help="padrao: todos no silver")
+    detect.add_argument("--run-id", default=None)
+    detect.add_argument("--contamination", type=float, default=None)
+    detect.add_argument("--n-estimators", type=int, default=None)
+    detect.add_argument("--train-fraction", type=float, default=None)
 
     inspect = subparsers.add_parser("inspect", help="mostra o snapshot normalized de um ticker")
     inspect.add_argument("--symbol", required=True)
@@ -111,6 +141,91 @@ def _print_snapshot(source: str, symbol: str, frame: Any) -> None:
     print(frame[columns].tail(5).to_string(index=False))
 
 
+def _print_transform_summary(summary: SilverSummary, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
+        return
+
+    print(f"run_id:    {summary.run_id}")
+    print(f"operacao:  {summary.operation}")
+    print(f"status:    {summary.status}")
+    print(f"duracao:   {summary.duration_seconds:.2f}s")
+    print(
+        f"linhas:    lidas={summary.totals['rows_read']} escritas={summary.totals['rows_written']}"
+    )
+    print(
+        "silver:    "
+        f"simbolos={summary.totals['symbols']} "
+        f"particoes={summary.totals['partitions_written']} "
+        f"bytes={summary.totals['bytes_written']}"
+    )
+    print(
+        "qualidade: "
+        f"criticas={summary.totals['critical_failures']} "
+        f"warnings={summary.totals['warnings']}"
+    )
+    print(f"manifest:  {summary.manifest_key}")
+    print(f"quality:   {summary.quality_report_key}")
+    for rule in summary.quality.get("rules", []):
+        if rule["failed_rows"]:
+            print(f"  {rule['severity']} {rule['name']}: {rule['failed_rows']} linha(s)")
+    if summary.error:
+        print(f"erro:      {summary.error}")
+
+
+def _print_benchmark(result: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+        return
+
+    print(f"linhas:    {result['rows']} ({result['symbols']} simbolos)")
+    print(
+        "pandas:    "
+        f"{result['pandas']['seconds']}s "
+        f"({result['pandas']['rows_per_second']} linhas/s)"
+    )
+    print(
+        f"spark:     {result['spark']['seconds']}s ({result['spark']['rows_per_second']} linhas/s)"
+    )
+    print(f"speedup:   pandas={result['pandas_speedup']}x spark")
+    print(f"artefato:  {result['artifact']}")
+
+
+def _print_anomaly_summary(summary: AnomalySummary, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
+        return
+
+    print(f"run_id:    {summary.run_id}")
+    print(f"operacao:  {summary.operation}")
+    print(f"status:    {summary.status}")
+    print(f"duracao:   {summary.duration_seconds:.2f}s")
+    print(
+        "linhas:    "
+        f"entrada={summary.totals['rows_input']} "
+        f"com_features={summary.totals['rows_scored']}"
+    )
+    print(
+        "anomalias: "
+        f"{summary.totals['anomalies']} "
+        f"({summary.totals['anomaly_rate']:.2%}) "
+        f"simbolos={summary.totals['symbols']}"
+    )
+    print(f"treino:    {summary.totals['training_rows']} linha(s)")
+    print(f"gold:      {summary.gold_prefix}")
+    print(f"modelo:    {summary.model_key}")
+    print(f"manifest:  {summary.manifest_key}")
+    print(f"metrics:   {summary.metrics_key}")
+    for anomaly in summary.metrics.get("top_anomalies", [])[:5]:
+        print(
+            f"  {anomaly['trade_date']} {anomaly['symbol']}: "
+            f"score={anomaly['anomaly_score']:.4f} "
+            f"retorno={anomaly['daily_return']}"
+        )
+    if summary.error:
+        print(f"erro:      {summary.error}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     setup_logging(args.log_level or "INFO")
@@ -135,6 +250,50 @@ def main(argv: list[str] | None = None) -> int:
             pipeline = IngestionPipeline(settings, None, storage)
             summary = pipeline.rebuild(args.symbols, run_id=args.run_id)
             _print_summary(summary, args.json)
+            return EXIT_CODES.get(summary.status, 2)
+
+        if args.command == "transform":
+            job = SilverJob(
+                settings,
+                storage,
+                master=args.master,
+                shuffle_partitions=args.shuffle_partitions,
+            )
+            summary = job.run(
+                args.symbols,
+                run_id=args.run_id,
+                full_refresh=args.full_refresh,
+            )
+            _print_transform_summary(summary, args.json)
+            return EXIT_CODES.get(summary.status, 2)
+
+        if args.command == "benchmark":
+            run_id = args.run_id or new_run_id(utc_now())
+            result = run_benchmark(
+                rows=args.rows,
+                symbol_count=args.symbol_count,
+                shuffle_partitions=(args.shuffle_partitions or settings.spark_shuffle_partitions),
+            )
+            artifact_key = benchmark_key(run_id)
+            payload = {"run_id": run_id, **result}
+            storage.write_bytes(
+                artifact_key,
+                json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8"),
+            )
+            result["artifact"] = artifact_key
+            _print_benchmark(result, args.json)
+            return 0
+
+        if args.command == "detect":
+            job = AnomalyJob(settings, storage)
+            summary = job.run(
+                args.symbols,
+                run_id=args.run_id,
+                contamination=args.contamination,
+                n_estimators=args.n_estimators,
+                train_fraction=args.train_fraction,
+            )
+            _print_anomaly_summary(summary, args.json)
             return EXIT_CODES.get(summary.status, 2)
 
         if args.command == "inspect":
