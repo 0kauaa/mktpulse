@@ -1,0 +1,10 @@
+services:
+  dashboard:
+    build: .
+    ports:
+      - "8501:8501"
+    environment:
+      MKT_LAKE_ROOT: /app/data/lake
+      MKT_SOURCE: yahoo
+    volumes:
+      - ./data/lake:/app/data/lake:ro
