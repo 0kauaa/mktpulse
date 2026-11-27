@@ -1,12 +1,12 @@
-"""pipeline de ingestao e replay da semana 1.
+"""Pipeline de ingestao e replay da Semana 1.
 
-garantias operacionais:
-- falha de um ticker nao derruba os demais (isolamento por simbolo);
-- landing raw idempotente por (dia, ticker, hash do payload);
-- normalized sempre deduplicado por (ticker, data do pregao), vencendo a
-  ingestao mais recente;
-- toda execucao grava um manifest com status, contagens e erros;
-- o normalized pode ser reconstruido a partir do raw (replay).
+Garantias operacionais:
+- Falha de um ticker não derruba os demais (isolamento por simbolo).
+- Landing raw idempotente por (dia, ticker, hash do payload).
+- Normalized sempre deduplicado por (ticker, data do pregao), vencendo a
+  ingestao mais recente.
+- Toda execucao grava um manifest com status, contagens e erros.
+- O normalized pode ser reconstruido a partir do raw (replay).
 """
 
 from __future__ import annotations
@@ -23,28 +23,23 @@ from typing import Any
 
 import pandas as pd
 
-from .config import Settings
-from .lake import (
-    SCHEMA_VERSION,
-    build_envelope,
-    decode_envelope,
-    encode_envelope,
-    ingestion_date,
-    manifest_key,
-    normalized_key,
-    raw_key,
-    raw_prefix,
-    utc_now,
+from mktpulse.comum import config as comum_config
+from mktpulse.comum import observability as comum_observability
+from mktpulse.processamento import (
+    lake as processamento_lake,
+    normalize as processamento_normalize,
+    storage as processamento_storage,
 )
-from .normalize import QUOTES_COLUMNS, QUOTES_SCHEMA, normalize_envelope
-from .observability import run_id_var
-from .sources import QuoteSource
-from .storage import Storage
 
-logger = logging.getLogger("mktpulse.pipeline")
+from .sources import QuoteSource
+
+logger = logging.getLogger("mktpulse.ingestao.pipeline")
+
 
 @dataclass
 class SymbolOutcome:
+    # Resultado detalhado por ticker. O manifest usa este objeto para responder
+    # "o que aconteceu com cada ativo?" sem obrigar a ler o log inteiro.
     symbol: str
     status: str = "ok"
     rows_received: int = 0
@@ -57,8 +52,10 @@ class SymbolOutcome:
     content_hash: str | None = None
     error: str | None = None
 
+
 @dataclass
 class RunSummary:
+    # Resumo de uma execucao inteira. `to_dict()` e o payload do manifest.
     run_id: str
     operation: str
     status: str
@@ -74,6 +71,7 @@ class RunSummary:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
 def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
     if symbols is None:
         return []
@@ -87,22 +85,31 @@ def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
             normalized.append(ticker)
     return normalized
 
+
 def _chunks(items: Sequence[str], size: int) -> list[list[str]]:
     return [list(items[index : index + size]) for index in range(0, len(items), size)]
 
+
 def _dedupe_quotes(frame: pd.DataFrame) -> pd.DataFrame:
-    frame = frame[QUOTES_COLUMNS].copy()
+    # Regra de negocio: existe no maximo uma linha por (symbol, trade_date).
+    # Ordenar por `ingested_at` antes do drop garante que a captura mais
+    # recente vence quando a fonte corrige um pregao antigo.
+    frame = frame[processamento_normalize.QUOTES_COLUMNS].copy()
     frame = frame.sort_values(["trade_date", "ingested_at"], kind="stable")
     frame = frame.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
     return frame.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
 
-def _read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame | None:
-    key = normalized_key(source, symbol)
+
+def _read_snapshot(
+    storage: processamento_storage.Storage, source: str, symbol: str
+) -> pd.DataFrame | None:
+    key = processamento_lake.normalized_key(source, symbol)
     if not storage.exists(key):
         return None
     return pd.read_parquet(BytesIO(storage.read_bytes(key)))
 
-def read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame:
+
+def read_snapshot(storage: processamento_storage.Storage, source: str, symbol: str) -> pd.DataFrame:
     frame = _read_snapshot(storage, source, symbol.upper())
     if frame is None:
         raise FileNotFoundError(
@@ -110,15 +117,18 @@ def read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame:
         )
     return frame
 
+
 class IngestionPipeline:
     def __init__(
         self,
-        settings: Settings,
+        settings: comum_config.Settings,
         client: QuoteSource | None,
-        storage: Storage,
+        storage: processamento_storage.Storage,
         *,
-        now: Any = utc_now,
+        now: Any = processamento_lake.utc_now,
     ) -> None:
+        # Injecao de dependencias: a pipeline nao cria HTTP nem Storage sozinha.
+        # Isso permite testar com clientes/storages falsos e trocar a fonte.
         self.settings = settings
         self.source = settings.source
         self.client = client
@@ -135,69 +145,41 @@ class IngestionPipeline:
     ) -> RunSummary:
         if self.client is None:
             raise RuntimeError("fonte de dados nao configurada para ingestao")
+
         tickers = _normalize_symbols(symbols or self.settings.symbol_list)
         if not tickers:
             raise ValueError("informe pelo menos um ticker")
 
         started_at = self._now()
         run_id = run_id or self._new_run_id(started_at)
-        token = run_id_var.set(run_id)
         outcomes = {symbol: SymbolOutcome(symbol=symbol) for symbol in tickers}
         fatal_error: Exception | None = None
         status = "failed"
 
-        batch_size = self.settings.brapi_batch_size if self.source == "brapi" else 1
-        logger.info(
-            "ingestao iniciada",
-            extra={
-                "source": self.source,
-                "range": range_,
-                "interval": interval,
-                "symbols": tickers,
-            },
-        )
-        try:
-            for index, batch in enumerate(_chunks(tickers, batch_size)):
-                if index:
-                    time.sleep(self.settings.request_pause_seconds)
-                try:
-                    response = self.client.fetch_quotes(batch, range_=range_, interval=interval)
-                except Exception as exc:  # noqa: ble001 - erro de batch vira erro por simbolo
-                    logger.error(
-                        "falha ao buscar lote",
-                        extra={"symbols": batch, "error": str(exc)},
-                        exc_info=True,
-                    )
-                    for symbol in batch:
-                        outcomes[symbol].status = "error"
-                        outcomes[symbol].error = str(exc)
-                    continue
+        # `run_context` injeta o run_id em todos os logs deste bloco, inclusive
+        # nos logs das funcoes chamadas internamente.
+        with comum_observability.run_context(run_id):
+            logger.info(
+                "ingestao iniciada",
+                extra={
+                    "source": self.source,
+                    "range": range_,
+                    "interval": interval,
+                    "symbols": tickers,
+                },
+            )
+            try:
+                self._ingest_batches(
+                    tickers,
+                    range_=range_,
+                    interval=interval,
+                    run_id=run_id,
+                    outcomes=outcomes,
+                )
+            except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
+                fatal_error = exc
+                logger.exception("ingestao abortada")
 
-                results = response
-                for symbol in batch:
-                    result = results.get(symbol)
-                    if result is None:
-                        outcomes[symbol].status = "error"
-                        outcomes[symbol].error = "simbolo ausente na resposta da fonte"
-                        logger.error("simbolo ausente na resposta", extra={"symbol": symbol})
-                        continue
-                    try:
-                        outcomes[symbol] = self._ingest_symbol(
-                            symbol=symbol,
-                            result=result,
-                            batch=batch,
-                            range_=range_,
-                            interval=interval,
-                            run_id=run_id,
-                        )
-                    except Exception as exc:  # noqa: ble001 - isolamento por simbolo
-                        outcomes[symbol].status = "error"
-                        outcomes[symbol].error = str(exc)
-                        logger.exception("falha ao ingerir simbolo", extra={"symbol": symbol})
-        except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
-            fatal_error = exc
-            logger.exception("ingestao abortada")
-        finally:
             finished_at = self._now()
             status = self._status(outcomes, fatal_error)
             totals = self._totals(outcomes)
@@ -217,9 +199,6 @@ class IngestionPipeline:
                 },
                 error=str(fatal_error) if fatal_error else None,
             )
-            self._write_manifest(summary)
-            logger.info("ingestao finalizada", extra={"status": status, **totals})
-            run_id_var.reset(token)
 
         if fatal_error:
             raise fatal_error
@@ -233,27 +212,28 @@ class IngestionPipeline:
     ) -> RunSummary:
         started_at = self._now()
         run_id = run_id or self._new_run_id(started_at)
-        token = run_id_var.set(run_id)
         target: list[str] = []
         outcomes: dict[str, SymbolOutcome] = {}
         fatal_error: Exception | None = None
-        status = "failed"
 
-        logger.info("rebuild iniciado", extra={"symbols": _normalize_symbols(symbols)})
-        try:
-            target = self._resolve_rebuild_symbols(symbols)
-            outcomes = {symbol: SymbolOutcome(symbol=symbol) for symbol in target}
-            for symbol in target:
-                try:
-                    outcomes[symbol] = self._rebuild_symbol(symbol, run_id=run_id)
-                except Exception as exc:  # noqa: ble001 - isolamento por simbolo
-                    outcomes[symbol].status = "error"
-                    outcomes[symbol].error = str(exc)
-                    logger.exception("falha no rebuild do simbolo", extra={"symbol": symbol})
-        except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
-            fatal_error = exc
-            logger.exception("rebuild abortado")
-        finally:
+        # O rebuild le apenas o raw. Nao ha chamada de API nem dependencia do
+        # normalized atual: o raw e a fonte da verdade.
+        with comum_observability.run_context(run_id):
+            logger.info("rebuild iniciado", extra={"symbols": _normalize_symbols(symbols)})
+            try:
+                target = self._resolve_rebuild_symbols(symbols)
+                outcomes = {symbol: SymbolOutcome(symbol=symbol) for symbol in target}
+                for symbol in target:
+                    try:
+                        outcomes[symbol] = self._rebuild_symbol(symbol, run_id=run_id)
+                    except Exception as exc:  # noqa: ble001 - isolamento por simbolo
+                        outcomes[symbol].status = "error"
+                        outcomes[symbol].error = str(exc)
+                        logger.exception("falha no rebuild do simbolo", extra={"symbol": symbol})
+            except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
+                fatal_error = exc
+                logger.exception("rebuild abortado")
+
             finished_at = self._now()
             status = self._status(outcomes, fatal_error)
             totals = self._totals(outcomes)
@@ -268,13 +248,83 @@ class IngestionPipeline:
                 config={"source": self.source, "input": "raw", "symbols": target},
                 error=str(fatal_error) if fatal_error else None,
             )
-            self._write_manifest(summary)
-            logger.info("rebuild finalizado", extra={"status": status, **totals})
-            run_id_var.reset(token)
 
         if fatal_error:
             raise fatal_error
         return summary
+
+    def _ingest_batches(
+        self,
+        tickers: Sequence[str],
+        *,
+        range_: str,
+        interval: str,
+        run_id: str,
+        outcomes: dict[str, SymbolOutcome],
+    ) -> None:
+        # A brapi aceita varios tickers por request; o Yahoo e um por vez.
+        # Pausar entre lotes reduz a chance de 429 (rate limit).
+        batch_size = self.settings.brapi_batch_size if self.source == "brapi" else 1
+
+        for index, batch in enumerate(_chunks(tickers, batch_size)):
+            if index:
+                time.sleep(self.settings.request_pause_seconds)
+
+            try:
+                response = self.client.fetch_quotes(batch, range_=range_, interval=interval)
+            except Exception as exc:  # noqa: ble001 - erro de lote vira erro por simbolo
+                logger.error(
+                    "falha ao buscar lote",
+                    extra={"symbols": batch, "error": str(exc)},
+                    exc_info=True,
+                )
+                for symbol in batch:
+                    outcomes[symbol].status = "error"
+                    outcomes[symbol].error = str(exc)
+                continue
+
+            for symbol in batch:
+                self._ingest_result(
+                    symbol,
+                    response.get(symbol),
+                    outcomes,
+                    batch=batch,
+                    range_=range_,
+                    interval=interval,
+                    run_id=run_id,
+                )
+
+    def _ingest_result(
+        self,
+        symbol: str,
+        result: dict[str, Any] | None,
+        outcomes: dict[str, SymbolOutcome],
+        *,
+        batch: Sequence[str],
+        range_: str,
+        interval: str,
+        run_id: str,
+    ) -> None:
+        if result is None:
+            # A fonte respondeu, mas sem este ticker (ex.: ticker invalido).
+            logger.error("simbolo ausente na resposta", extra={"symbol": symbol})
+            outcomes[symbol].status = "error"
+            outcomes[symbol].error = "simbolo ausente na resposta da fonte"
+            return
+
+        try:
+            outcomes[symbol] = self._ingest_symbol(
+                symbol=symbol,
+                result=result,
+                batch=batch,
+                range_=range_,
+                interval=interval,
+                run_id=run_id,
+            )
+        except Exception as exc:  # noqa: ble001 - isolamento por simbolo
+            outcomes[symbol].status = "error"
+            outcomes[symbol].error = str(exc)
+            logger.exception("falha ao ingerir simbolo", extra={"symbol": symbol})
 
     def _ingest_symbol(
         self,
@@ -287,7 +337,7 @@ class IngestionPipeline:
         run_id: str,
     ) -> SymbolOutcome:
         ingested_at = self._now()
-        envelope = build_envelope(
+        envelope = processamento_lake.build_envelope(
             source=self.source,
             run_id=run_id,
             symbol=symbol,
@@ -296,9 +346,11 @@ class IngestionPipeline:
             ingested_at=ingested_at,
         )
         content_hash = str(envelope["content_hash"])
-        key = raw_key(self.source, symbol, ingestion_date(ingested_at), content_hash)
-        encoded = encode_envelope(envelope)
+        key = processamento_lake.raw_key(self.source, symbol, processamento_lake.ingestion_date(ingested_at), content_hash)
+        encoded = processamento_lake.encode_envelope(envelope)
 
+        # Grava o raw ANTES de normalizar. Se a normalizacao falhar, o payload
+        # original continua disponivel para diagnostico e replay.
         raw_written = False
         if self.storage.exists(key):
             logger.info(
@@ -317,7 +369,7 @@ class IngestionPipeline:
             content_hash=content_hash,
         )
         try:
-            normalized = normalize_envelope(envelope)
+            normalized = processamento_normalize.normalize_envelope(envelope)
             outcome.rows_received = int(normalized.attrs.get("rows_received", len(normalized)))
             outcome.rows_skipped = int(normalized.attrs.get("rows_skipped", 0))
             outcome.rows_written = len(normalized)
@@ -346,6 +398,8 @@ class IngestionPipeline:
         return outcome
 
     def _merge_and_write(self, symbol: str, frame: pd.DataFrame) -> int:
+        # O normalized e um snapshot por ticker: le o existente, concatena com o
+        # novo e deduplica pela chave de negocio antes de reescrever.
         existing = _read_snapshot(self.storage, self.source, symbol)
         combined = frame if existing is None else pd.concat([existing, frame], ignore_index=True)
         combined = _dedupe_quotes(combined)
@@ -353,13 +407,21 @@ class IngestionPipeline:
         return len(combined)
 
     def _write_snapshot(self, symbol: str, frame: pd.DataFrame) -> None:
+        # Serializa em memoria com schema Arrow fixo; o LocalStorage faz a
+        # escrita atomica via arquivo temporario + os.replace.
         buffer = BytesIO()
-        frame.to_parquet(buffer, index=False, engine="pyarrow", schema=QUOTES_SCHEMA)
-        self.storage.write_bytes(normalized_key(self.source, symbol), buffer.getvalue())
+        frame.to_parquet(
+            buffer, index=False, engine="pyarrow", schema=processamento_normalize.QUOTES_SCHEMA
+        )
+        self.storage.write_bytes(
+            processamento_lake.normalized_key(self.source, symbol), buffer.getvalue()
+        )
 
     def _rebuild_symbol(self, symbol: str, *, run_id: str) -> SymbolOutcome:
         keys = [
-            key for key in self.storage.list(raw_prefix(self.source)) if f"/symbol={symbol}/" in key
+            key
+            for key in self.storage.list(processamento_lake.raw_prefix(self.source))
+            if f"/symbol={symbol}/" in key
         ]
         if not keys:
             raise FileNotFoundError(f"nenhum objeto raw encontrado para {symbol}")
@@ -368,15 +430,17 @@ class IngestionPipeline:
         errors: list[str] = []
         for key in keys:
             try:
-                envelope = decode_envelope(self.storage.read_bytes(key))
-                frames.append(normalize_envelope(envelope))
-            except Exception as exc:  # noqa: ble001 - agrega erros para nao sobrescrever snapshot
+                envelope = processamento_lake.decode_envelope(self.storage.read_bytes(key))
+                frames.append(processamento_normalize.normalize_envelope(envelope))
+            except Exception as exc:  # noqa: ble001 - agrega erros antes de sobrescrever
                 errors.append(f"{key}: {exc}")
                 logger.error(
                     "raw invalido durante rebuild", extra={"raw_key": key, "error": str(exc)}
                 )
 
         if errors:
+            # Se qualquer raw do ticker estiver corrompido, preserva o snapshot
+            # anterior em vez de gravar um normalized parcial.
             raise RuntimeError(
                 f"{len(errors)} objeto(s) raw invalido(s); snapshot de {symbol} preservado"
             )
@@ -409,12 +473,12 @@ class IngestionPipeline:
         requested = _normalize_symbols(symbols)
         if requested:
             return requested
-
         discovered: set[str] = set()
-        for key in self.storage.list(raw_prefix(self.source)):
+        for key in self.storage.list(processamento_lake.raw_prefix(self.source)):
             for part in key.split("/"):
                 if part.startswith("symbol="):
                     discovered.add(part.split("=", 1)[1].upper())
+                    break
         if not discovered:
             raise FileNotFoundError("nenhum dado raw no lake para reconstruir")
         return sorted(discovered)
@@ -439,7 +503,7 @@ class IngestionPipeline:
             started_at=started_at.astimezone(UTC).isoformat(),
             finished_at=finished_at.astimezone(UTC).isoformat(),
             duration_seconds=round((finished_at - started_at).total_seconds(), 3),
-            manifest_key=manifest_key(run_id, ingestion_date(started_at)),
+            manifest_key=processamento_lake.manifest_key(run_id, processamento_lake.ingestion_date(started_at)),
             symbols=outcomes,
             totals=totals,
             config=config,
@@ -447,20 +511,17 @@ class IngestionPipeline:
         )
 
     def _write_manifest(self, summary: RunSummary) -> None:
-        manifest = {
-            "schema_version": SCHEMA_VERSION,
-            **summary.to_dict(),
-        }
-        body = json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8")
-        try:
-            self.storage.write_bytes(summary.manifest_key, body)
-        except Exception:  # noqa: ble001 - manifest nao pode mascarar o resultado
-            logger.exception(
-                "falha ao gravar manifest", extra={"manifest_key": summary.manifest_key}
-            )
+        processamento_artifacts.write_manifest(
+            self.storage,
+            summary.manifest_key,
+            summary,
+            logger=logger,
+            failure_message="falha ao gravar manifest de ingestao",
+        )
 
     @staticmethod
     def _status(outcomes: dict[str, SymbolOutcome], fatal_error: Exception | None) -> str:
+        # Tres estados para o agendador: success, partial, failed.
         if fatal_error or not outcomes:
             return "failed"
         failed = [outcome for outcome in outcomes.values() if outcome.status != "ok"]

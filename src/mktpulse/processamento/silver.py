@@ -16,25 +16,20 @@ from typing import Any
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from .config import Settings
-from .indicators import add_indicators
-from .lake import (
-    SCHEMA_VERSION,
-    ingestion_date,
-    manifest_key,
-    new_run_id,
-    normalized_prefix,
-    run_artifact_key,
-    silver_prefix,
-    utc_now,
+from mktpulse.comum import config as comum_config
+from mktpulse.comum import observability as comum_observability
+from mktpulse.processamento import (
+    indicators as processamento_indicators,
+    lake as processamento_lake,
+    quality as processamento_quality,
+    spark_schemas as processamento_spark_schemas,
+    spark_session as processamento_spark_session,
+    storage as processamento_storage,
 )
-from .observability import run_id_var
-from .quality import QualityReport, evaluate_quality
-from .spark_schemas import QUOTES_SPARK_SCHEMA
-from .spark_session import build_spark_session
-from .storage import Storage
+from mktpulse.comum import symbols as comum_symbols
 
 logger = logging.getLogger("mktpulse.silver")
+
 
 @dataclass
 class SilverSummary:
@@ -55,6 +50,7 @@ class SilverSummary:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
+
 def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
     if symbols is None:
         return []
@@ -68,7 +64,8 @@ def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
             normalized.append(ticker)
     return normalized
 
-def _quality_summary(report: QualityReport | None) -> dict[str, Any]:
+
+def _quality_summary(report: processamento_quality.QualityReport | None) -> dict[str, Any]:
     if report is None:
         return {}
     return {
@@ -87,16 +84,17 @@ def _quality_summary(report: QualityReport | None) -> dict[str, Any]:
         ],
     }
 
+
 class SilverJob:
     def __init__(
         self,
-        settings: Settings,
-        storage: Storage,
+        settings: comum_config.Settings,
+        storage: processamento_storage.Storage,
         *,
         spark: SparkSession | None = None,
         master: str | None = None,
         shuffle_partitions: int | None = None,
-        now: Any = utc_now,
+        now: Any = processamento_lake.utc_now,
     ) -> None:
         self.settings = settings
         self.source = settings.source
@@ -119,10 +117,10 @@ class SilverJob:
             )
 
         started_at = self._now()
-        run_id = run_id or new_run_id(started_at)
-        token = run_id_var.set(run_id)
+        run_id = run_id or processamento_lake.new_run_id(started_at)
+        token = comum_observability.run_id_var.set(run_id)
         tickers = _normalize_symbols(symbols)
-        quality_report: QualityReport | None = None
+        quality_report: processamento_quality.QualityReport | None = None
         enriched: DataFrame | None = None
         output_path: Path | None = None
         rows_read = 0
@@ -147,7 +145,7 @@ class SilverJob:
 
         try:
             if spark is None:
-                spark = build_spark_session(
+                spark = processamento_spark_session.build_spark_session(
                     app_name=f"mktpulse-transform-{run_id}",
                     master=self.master or self.settings.spark_master,
                     shuffle_partitions=(
@@ -157,8 +155,8 @@ class SilverJob:
                 spark_owned = True
 
             bronze = self._read_bronze(spark, tickers)
-            enriched = add_indicators(bronze).cache()
-            quality_report = evaluate_quality(
+            enriched = processamento_indicators.add_indicators(bronze).cache()
+            quality_report = processamento_quality.evaluate_quality(
                 enriched,
                 as_of=started_at.date(),
                 max_daily_return=self.settings.quality_max_daily_return,
@@ -238,20 +236,20 @@ class SilverJob:
                 enriched.unpersist()
             if spark_owned and spark is not None:
                 spark.stop()
-            run_id_var.reset(token)
+            comum_observability.run_id_var.reset(token)
 
         if fatal_error:
             raise fatal_error
         return summary
 
     def _read_bronze(self, spark: SparkSession, tickers: Sequence[str]) -> DataFrame:
-        root = (self.settings.lake_root / normalized_prefix(self.source)).resolve()
+        root = (self.settings.lake_root / processamento_lake.normalized_prefix(self.source)).resolve()
         if not root.exists() or next(root.rglob("*.parquet"), None) is None:
             raise FileNotFoundError(
                 f"nenhum Parquet normalized encontrado em {root}; rode o rebuild primeiro"
             )
 
-        frame = spark.read.schema(QUOTES_SPARK_SCHEMA).parquet(str(root))
+        frame = spark.read.schema(processamento_spark_schemas.QUOTES_SPARK_SCHEMA).parquet(str(root))
         if tickers:
             frame = frame.filter(F.col("symbol").isin(tickers))
         if not frame.take(1):
@@ -259,7 +257,7 @@ class SilverJob:
         return frame
 
     def _output_path(self) -> Path:
-        return (self.settings.lake_root / silver_prefix(self.source)).resolve()
+        return (self.settings.lake_root / processamento_lake.silver_prefix(self.source)).resolve()
 
     def _write_silver(
         self,
@@ -283,18 +281,16 @@ class SilverJob:
         )
 
     def _quality_report_key(self, run_id: str, started_at: datetime) -> str:
-        return run_artifact_key(run_id, ingestion_date(started_at), "quality_report.json")
+        return processamento_lake.run_artifact_key(run_id, processamento_lake.ingestion_date(started_at), "quality_report.json")
 
     def _write_quality_report(
         self,
         run_id: str,
         started_at: datetime,
-        report: QualityReport,
+        report: processamento_quality.QualityReport,
     ) -> None:
         key = self._quality_report_key(run_id, started_at)
-        body = json.dumps(report.to_dict(), indent=2, ensure_ascii=False, default=str).encode(
-            "utf-8"
-        )
+        body = json.dumps(report.to_dict(), indent=2, ensure_ascii=False, default=str).encode("utf-8")
         self.storage.write_bytes(key, body)
 
     def _build_summary(
@@ -304,7 +300,7 @@ class SilverJob:
         status: str,
         started_at: datetime,
         finished_at: datetime,
-        quality_report: QualityReport | None,
+        quality_report: processamento_quality.QualityReport | None,
         rows_read: int,
         rows_written: int,
         symbol_count: int,
@@ -330,14 +326,14 @@ class SilverJob:
             started_at=started_at.astimezone(UTC).isoformat(),
             finished_at=finished_at.astimezone(UTC).isoformat(),
             duration_seconds=round((finished_at - started_at).total_seconds(), 3),
-            manifest_key=manifest_key(run_id, ingestion_date(started_at)),
+            manifest_key=processamento_lake.manifest_key(run_id, processamento_lake.ingestion_date(started_at)),
             quality_report_key=self._quality_report_key(run_id, started_at),
-            silver_prefix=silver_prefix(self.source),
+            silver_prefix=processamento_lake.silver_prefix(self.source),
             totals=totals,
             config={
                 "source": self.source,
-                "input": normalized_prefix(self.source),
-                "output": silver_prefix(self.source),
+                "input": processamento_lake.normalized_prefix(self.source),
+                "output": processamento_lake.silver_prefix(self.source),
                 "symbols": list(tickers),
                 "full_refresh": full_refresh,
                 "master": self.master or self.settings.spark_master,
@@ -351,7 +347,7 @@ class SilverJob:
 
     def _write_manifest(self, summary: SilverSummary) -> None:
         manifest = {
-            "schema_version": SCHEMA_VERSION,
+            "schema_version": processamento_lake.SCHEMA_VERSION,
             **summary.to_dict(),
         }
         body = json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8")

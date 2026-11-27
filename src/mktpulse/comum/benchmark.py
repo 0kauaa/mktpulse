@@ -1,5 +1,5 @@
 """
-uma breve comparacao controlada entre pandas e spark com dados sinteticos.
+breve comparacao controlada entre pandas e spark com dados sinteticos.
 """
 
 from __future__ import annotations
@@ -12,12 +12,13 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from pyspark.sql import SparkSession
 
-from .indicators import add_indicators
-from .normalize import QUOTES_COLUMNS, QUOTES_SCHEMA
-from .spark_schemas import QUOTES_SPARK_SCHEMA
-from .spark_session import build_spark_session
+from mktpulse.processamento import (
+    indicators as processamento_indicators,
+    normalize as processamento_normalize,
+    spark_schemas as processamento_spark_schemas,
+    spark_session as processamento_spark_session,
+)
 
 @dataclass
 class EngineMetrics:
@@ -28,6 +29,7 @@ class EngineMetrics:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
 
 def generate_synthetic_quotes(*, rows: int, symbol_count: int, seed: int = 42) -> pd.DataFrame:
     if rows < 60:
@@ -69,7 +71,8 @@ def generate_synthetic_quotes(*, rows: int, symbol_count: int, seed: int = 42) -
             )
         )
 
-    return pd.concat(frames, ignore_index=True)[QUOTES_COLUMNS]
+    return pd.concat(frames, ignore_index=True)[processamento_normalize.QUOTES_COLUMNS]
+
 
 def _pandas_metrics(path: Path, output: Path) -> EngineMetrics:
     start = time.perf_counter()
@@ -106,14 +109,15 @@ def _pandas_metrics(path: Path, output: Path) -> EngineMetrics:
         rows_per_second=round(len(frame) / seconds, 1) if seconds else 0.0,
     )
 
+
 def _spark_metrics(
     spark: SparkSession,
     path: Path,
     output: Path,
 ) -> EngineMetrics:
     start = time.perf_counter()
-    frame = spark.read.schema(QUOTES_SPARK_SCHEMA).parquet(str(path))
-    prepared = add_indicators(frame).repartition("symbol").sortWithinPartitions("trade_date")
+    frame = spark.read.schema(processamento_spark_schemas.QUOTES_SPARK_SCHEMA).parquet(str(path))
+    prepared = processamento_indicators.add_indicators(frame).repartition("symbol").sortWithinPartitions("trade_date")
     prepared.write.mode("overwrite").parquet(str(output))
     rows = spark.read.parquet(str(output)).count()
     seconds = time.perf_counter() - start
@@ -125,6 +129,7 @@ def _spark_metrics(
         rows_per_second=round(rows / seconds, 1) if seconds else 0.0,
     )
 
+
 def run_benchmark(
     *,
     rows: int = 250_000,
@@ -135,7 +140,7 @@ def run_benchmark(
     session = spark
     owned = False
     if session is None:
-        session = build_spark_session(
+        session = processamento_spark_session.build_spark_session(
             app_name="mktpulse-benchmark", shuffle_partitions=shuffle_partitions
         )
         owned = True
@@ -148,7 +153,7 @@ def run_benchmark(
             spark_output = root / "spark"
 
             frame = generate_synthetic_quotes(rows=rows, symbol_count=symbol_count)
-            frame.to_parquet(source, index=False, schema=QUOTES_SCHEMA)
+            frame.to_parquet(source, index=False, schema=processamento_normalize.QUOTES_SCHEMA)
 
             pandas_metrics = _pandas_metrics(source, pandas_output)
             spark_metrics = _spark_metrics(session, source, spark_output)

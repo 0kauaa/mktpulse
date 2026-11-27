@@ -1,11 +1,9 @@
 """cli do mktpulse.
 
-codigos de saida:
+códigos de saída (contrato com o agendador, ex.: cron, airflow, eventbridge):
     0 = sucesso
-    1 = sucesso parcial (algum ticker falhou)
-    2 = falha (nada gravado, configuracao invalida ou erro fatal)
-
-esses codigos sao o contrato com o agendador (cron, airflow, eventbridge).
+    1 = sucesso parcial
+    2 = falha
 """
 
 from __future__ import annotations
@@ -16,19 +14,22 @@ import logging
 import sys
 from typing import Any
 
-from .anomaly import AnomalyJob, AnomalySummary
-from .benchmark import run_benchmark
-from .config import Settings, get_settings
-from .lake import benchmark_key, new_run_id, utc_now
-from .observability import setup_logging
-from .pipeline import IngestionPipeline, RunSummary, read_snapshot
-from .silver import SilverJob, SilverSummary
-from .sources import create_quote_source
-from .storage import create_storage
+from mktpulse.comum import benchmark as benchmark_module
+from mktpulse.comum import config as config_module
+from mktpulse.comum import observability as observability_module
+from mktpulse.ingestao import pipeline as pipeline_module
+from mktpulse.ingestao.sources import create_quote_source
+from mktpulse.inferencia import anomaly as anomaly_module
+from mktpulse.processamento import artifacts as artifacts_module
+from mktpulse.processamento import lake as lake_module
+from mktpulse.processamento import silver as silver_module
+from mktpulse.processamento import storage as storage_module
 
 logger = logging.getLogger("mktpulse.cli")
 
-EXIT_CODES = {"success": 0, "partial": 1, "failed": 2}
+EXIT_CODES = {"sucesso": 0, "parcial": 1, "falha": 2}
+
+Handler = Callable[[argparse.Namespace, config_module.Settings, storage_module.Storage], int]
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -40,26 +41,22 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     ingest = subparsers.add_parser("ingest", help="busca dados da brapi e grava raw + normalized")
-    ingest.add_argument("--symbols", default=None, help="ex.: PETR4,VALE3 (padrao: MKT_SYMBOLS)")
+    _add_symbols(ingest, "ex.: PETR4,VALE3 (padrao: MKT_SYMBOLS)")
     ingest.add_argument(
         "--range", dest="range_", default="1y", help="janela historica (padrao: 1y)"
     )
     ingest.add_argument(
         "--interval", dest="interval_", default="1d", help="granularidade (padrao: 1d)"
     )
-    ingest.add_argument(
-        "--run-id", default=None, help="reutilize um run_id para demonstrar idempotencia"
-    )
+    _add_run_id(ingest, "reutilize um run_id para demonstrar idempotencia")
 
     rebuild = subparsers.add_parser("rebuild", help="reconstroi o normalized a partir do raw")
-    rebuild.add_argument(
-        "--symbols", default=None, help="padrao: descobre todos os simbolos no raw"
-    )
-    rebuild.add_argument("--run-id", default=None)
+    _add_symbols(rebuild, "padrao: descobre todos os simbolos no raw")
+    _add_run_id(rebuild)
 
     transform = subparsers.add_parser("transform", help="constroi a camada silver com PySpark")
-    transform.add_argument("--symbols", default=None, help="padrao: todos no normalized")
-    transform.add_argument("--run-id", default=None)
+    _add_symbols(transform, "padrao: todos no normalized")
+    _add_run_id(transform)
     transform.add_argument(
         "--full-refresh",
         action="store_true",
@@ -74,11 +71,11 @@ def build_parser() -> argparse.ArgumentParser:
     benchmark.add_argument("--rows", type=int, default=250_000)
     benchmark.add_argument("--symbol-count", type=int, default=8)
     benchmark.add_argument("--shuffle-partitions", type=int, default=None)
-    benchmark.add_argument("--run-id", default=None)
+    _add_run_id(benchmark)
 
     detect = subparsers.add_parser("detect", help="detecta anomalias com Isolation Forest")
-    detect.add_argument("--symbols", default=None, help="padrao: todos no silver")
-    detect.add_argument("--run-id", default=None)
+    _add_symbols(detect, "padrao: todos no silver")
+    _add_run_id(detect)
     detect.add_argument("--contamination", type=float, default=None)
     detect.add_argument("--n-estimators", type=int, default=None)
     detect.add_argument("--train-fraction", type=float, default=None)
@@ -87,15 +84,123 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--symbol", required=True)
     return parser
 
-def _print_summary(summary: RunSummary, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
-        return
+def _add_symbols(parser: argparse.ArgumentParser, help_text: str) -> None:
+    parser.add_argument("--symbols", default=None, help=help_text)
 
+def _add_run_id(parser: argparse.ArgumentParser, help_text: str | None = None) -> None:
+    parser.add_argument("--run-id", default=None, help=help_text)
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    observability_module.setup_logging(args.log_level or "INFO")
+
+    try:
+        settings = _load_settings(args.log_level)
+        storage = storage_module.create_storage(settings)
+        handler = _HANDLERS.get(args.command)
+        if handler is None:
+            logger.error("comando desconhecido", extra={"command": args.command})
+            return 2
+        return handler(args, settings, storage)
+    except Exception as exc:  # noqa: BLE001 - fronteira da CLI
+        logger.exception("comando falhou")
+        print(f"erro: {exc}", file=sys.stderr)
+        return 2
+
+def _load_settings(log_level: str | None) -> config_module.Settings:
+    settings = config_module.get_settings()
+    if log_level is None:
+        observability_module.setup_logging(settings.log_level)
+    return settings
+
+def _run_ingest(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    pipeline = pipeline_module.IngestionPipeline(settings, create_quote_source(settings), storage)
+    summary = pipeline.ingest(
+        args.symbols,
+        range_=args.range_,
+        interval=args.interval_,
+        run_id=args.run_id,
+    )
+    _print_ingest_summary(summary, args.json)
+    return EXIT_CODES.get(summary.status, 2)
+
+def _run_rebuild(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    pipeline = pipeline_module.IngestionPipeline(settings, None, storage)
+    summary = pipeline.rebuild(args.symbols, run_id=args.run_id)
+    _print_ingest_summary(summary, args.json)
+    return EXIT_CODES.get(summary.status, 2)
+
+def _run_transform(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    job = silver_module.SilverJob(
+        settings,
+        storage,
+        master=args.master,
+        shuffle_partitions=args.shuffle_partitions,
+    )
+    summary = job.run(
+        args.symbols,
+        run_id=args.run_id,
+        full_refresh=args.full_refresh,
+    )
+    _print_transform_summary(summary, args.json)
+    return EXIT_CODES.get(summary.status, 2)
+
+def _run_benchmark(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    run_id = args.run_id or lake_module.new_run_id(observability_module.utc_now())
+    result = benchmark_module.run_benchmark(
+        rows=args.rows,
+        symbol_count=args.symbol_count,
+        shuffle_partitions=args.shuffle_partitions or settings.spark_shuffle_partitions,
+    )
+    artifact_key = lake_module.benchmark_key(run_id)
+    artifacts_module.write_json(storage, artifact_key, {"run_id": run_id, **result})
+    result["artifact"] = artifact_key
+    _print_benchmark(result, args.json)
+    return 0
+
+def _run_detect(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    job = anomaly_module.AnomalyJob(settings, storage)
+    summary = job.run(
+        args.symbols,
+        run_id=args.run_id,
+        contamination=args.contamination,
+        n_estimators=args.n_estimators,
+        train_fraction=args.train_fraction,
+    )
+    _print_anomaly_summary(summary, args.json)
+    return EXIT_CODES.get(summary.status, 2)
+
+def _run_inspect(args: argparse.Namespace, settings: config_module.Settings, storage: storage_module.Storage) -> int:
+    frame = pipeline_module.read_snapshot(storage, settings.source, args.symbol)
+    _print_snapshot(settings.source, args.symbol, frame)
+    return 0
+
+
+_HANDLERS: dict[str, Handler] = {
+    "ingest": _run_ingest,
+    "rebuild": _run_rebuild,
+    "transform": _run_transform,
+    "benchmark": _run_benchmark,
+    "detect": _run_detect,
+    "inspect": _run_inspect,
+}
+
+def _print_header(summary: Any) -> None:
     print(f"run_id:    {summary.run_id}")
     print(f"operacao:  {summary.operation}")
     print(f"status:    {summary.status}")
     print(f"duracao:   {summary.duration_seconds:.2f}s")
+
+def _print_json(payload: Any, as_json: bool) -> bool:
+    if not as_json:
+        return False
+    print(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+    return True
+
+def _print_ingest_summary(summary: pipeline_module.RunSummary, as_json: bool) -> None:
+    if _print_json(summary.to_dict(), as_json):
+        return
+    _print_header(summary)
     print(
         "simbolos:  "
         f"{summary.totals['symbols_ok']} ok / "
@@ -137,15 +242,10 @@ def _print_snapshot(source: str, symbol: str, frame: Any) -> None:
     print("ultimas linhas:")
     print(frame[columns].tail(5).to_string(index=False))
 
-def _print_transform_summary(summary: SilverSummary, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
+def _print_transform_summary(summary: silver_module.SilverSummary, as_json: bool) -> None:
+    if _print_json(summary.to_dict(), as_json):
         return
-
-    print(f"run_id:    {summary.run_id}")
-    print(f"operacao:  {summary.operation}")
-    print(f"status:    {summary.status}")
-    print(f"duracao:   {summary.duration_seconds:.2f}s")
+    _print_header(summary)
     print(
         f"linhas:    lidas={summary.totals['rows_read']} escritas={summary.totals['rows_written']}"
     )
@@ -169,10 +269,8 @@ def _print_transform_summary(summary: SilverSummary, as_json: bool) -> None:
         print(f"erro:      {summary.error}")
 
 def _print_benchmark(result: dict[str, Any], as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    if _print_json(result, as_json):
         return
-
     print(f"linhas:    {result['rows']} ({result['symbols']} simbolos)")
     print(
         "pandas:    "
@@ -185,15 +283,10 @@ def _print_benchmark(result: dict[str, Any], as_json: bool) -> None:
     print(f"speedup:   pandas={result['pandas_speedup']}x spark")
     print(f"artefato:  {result['artifact']}")
 
-def _print_anomaly_summary(summary: AnomalySummary, as_json: bool) -> None:
-    if as_json:
-        print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
+def _print_anomaly_summary(summary: anomaly_module.AnomalySummary, as_json: bool) -> None:
+    if _print_json(summary.to_dict(), as_json):
         return
-
-    print(f"run_id:    {summary.run_id}")
-    print(f"operacao:  {summary.operation}")
-    print(f"status:    {summary.status}")
-    print(f"duracao:   {summary.duration_seconds:.2f}s")
+    _print_header(summary)
     print(
         "linhas:    "
         f"entrada={summary.totals['rows_input']} "
@@ -218,91 +311,3 @@ def _print_anomaly_summary(summary: AnomalySummary, as_json: bool) -> None:
         )
     if summary.error:
         print(f"erro:      {summary.error}")
-
-def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    setup_logging(args.log_level or "INFO")
-
-    try:
-        settings = _load_settings(args.log_level)
-        storage = create_storage(settings)
-
-        if args.command == "ingest":
-            client = create_quote_source(settings)
-            pipeline = IngestionPipeline(settings, client, storage)
-            summary = pipeline.ingest(
-                args.symbols,
-                range_=args.range_,
-                interval=args.interval_,
-                run_id=args.run_id,
-            )
-            _print_summary(summary, args.json)
-            return EXIT_CODES.get(summary.status, 2)
-
-        if args.command == "rebuild":
-            pipeline = IngestionPipeline(settings, None, storage)
-            summary = pipeline.rebuild(args.symbols, run_id=args.run_id)
-            _print_summary(summary, args.json)
-            return EXIT_CODES.get(summary.status, 2)
-
-        if args.command == "transform":
-            job = SilverJob(
-                settings,
-                storage,
-                master=args.master,
-                shuffle_partitions=args.shuffle_partitions,
-            )
-            summary = job.run(
-                args.symbols,
-                run_id=args.run_id,
-                full_refresh=args.full_refresh,
-            )
-            _print_transform_summary(summary, args.json)
-            return EXIT_CODES.get(summary.status, 2)
-
-        if args.command == "benchmark":
-            run_id = args.run_id or new_run_id(utc_now())
-            result = run_benchmark(
-                rows=args.rows,
-                symbol_count=args.symbol_count,
-                shuffle_partitions=(args.shuffle_partitions or settings.spark_shuffle_partitions),
-            )
-            artifact_key = benchmark_key(run_id)
-            payload = {"run_id": run_id, **result}
-            storage.write_bytes(
-                artifact_key,
-                json.dumps(payload, indent=2, ensure_ascii=False, default=str).encode("utf-8"),
-            )
-            result["artifact"] = artifact_key
-            _print_benchmark(result, args.json)
-            return 0
-
-        if args.command == "detect":
-            job = AnomalyJob(settings, storage)
-            summary = job.run(
-                args.symbols,
-                run_id=args.run_id,
-                contamination=args.contamination,
-                n_estimators=args.n_estimators,
-                train_fraction=args.train_fraction,
-            )
-            _print_anomaly_summary(summary, args.json)
-            return EXIT_CODES.get(summary.status, 2)
-
-        if args.command == "inspect":
-            frame = read_snapshot(storage, settings.source, args.symbol)
-            _print_snapshot(settings.source, args.symbol, frame)
-            return 0
-
-        logger.error("comando desconhecido", extra={"command": args.command})
-        return 2
-    except Exception as exc:  # noqa: ble001 - fronteira da cli
-        logger.exception("comando falhou")
-        print(f"erro: {exc}", file=sys.stderr)
-        return 2
-
-def _load_settings(log_level: str | None) -> Settings:
-    settings = get_settings()
-    if log_level is None:
-        setup_logging(settings.log_level)
-    return settings

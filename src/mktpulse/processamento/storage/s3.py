@@ -1,3 +1,5 @@
+"""storage de objetos em S3, MinIO ou localstack."""
+
 from __future__ import annotations
 
 from .base import validate_key

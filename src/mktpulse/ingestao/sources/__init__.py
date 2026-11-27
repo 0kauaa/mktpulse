@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from mktpulse.config import Settings
+from mktpulse.comum.config import Settings
 
 from .brapi import BrapiClient, BrapiError
 from .yahoo import YahooClient, YahooError

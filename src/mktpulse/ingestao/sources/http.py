@@ -10,7 +10,6 @@ from urllib3.util.retry import Retry
 
 _RETRY_STATUS_CODES = (429, 500, 502, 503, 504)
 
-
 def build_retrying_session(max_retries: int) -> requests.Session:
     # retry apenas em erros transitorios. `backoff_factor=1.0` dobra a espera
     # entre tentativas; `respect_retry_after_header` obedece o 429 do servidor.
@@ -32,7 +31,6 @@ def build_retrying_session(max_retries: int) -> requests.Session:
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
-
 
 def decode_json_body(response: requests.Response) -> Any | None:
     # nem todo erro http tem corpo json; devolver none deixa o cliente decidir.

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from mktpulse.config import Settings
+from mktpulse.comum.config import Settings
 
 from .base import Storage
 from .local import LocalStorage
