@@ -1,5 +1,5 @@
 """
-uma breve comparacao controlada entre Pandas e Spark com dados sinteticos.
+uma breve comparacao controlada entre pandas e spark com dados sinteticos.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from .normalize import QUOTES_COLUMNS, QUOTES_SCHEMA
 from .spark_schemas import QUOTES_SPARK_SCHEMA
 from .spark_session import build_spark_session
 
-
 @dataclass
 class EngineMetrics:
     engine: str
@@ -29,7 +28,6 @@ class EngineMetrics:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
-
 
 def generate_synthetic_quotes(*, rows: int, symbol_count: int, seed: int = 42) -> pd.DataFrame:
     if rows < 60:
@@ -73,7 +71,6 @@ def generate_synthetic_quotes(*, rows: int, symbol_count: int, seed: int = 42) -
 
     return pd.concat(frames, ignore_index=True)[QUOTES_COLUMNS]
 
-
 def _pandas_metrics(path: Path, output: Path) -> EngineMetrics:
     start = time.perf_counter()
     frame = pd.read_parquet(path)
@@ -109,7 +106,6 @@ def _pandas_metrics(path: Path, output: Path) -> EngineMetrics:
         rows_per_second=round(len(frame) / seconds, 1) if seconds else 0.0,
     )
 
-
 def _spark_metrics(
     spark: SparkSession,
     path: Path,
@@ -128,7 +124,6 @@ def _spark_metrics(
         seconds=round(seconds, 3),
         rows_per_second=round(rows / seconds, 1) if seconds else 0.0,
     )
-
 
 def run_benchmark(
     *,

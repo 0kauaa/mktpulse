@@ -1,4 +1,4 @@
-"""Deteccao de anomalias com Isolation Forest sobre a camada silver."""
+"""deteccao de anomalias com isolation forest sobre a camada silver."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ from .storage import Storage
 
 logger = logging.getLogger("mktpulse.anomaly")
 
-
 @dataclass
 class AnomalySummary:
     run_id: str
@@ -52,7 +51,6 @@ class AnomalySummary:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
 def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
     if symbols is None:
         return []
@@ -65,7 +63,6 @@ def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
             seen.add(ticker)
             normalized.append(ticker)
     return normalized
-
 
 def _build_pipeline(
     *,
@@ -92,12 +89,10 @@ def _build_pipeline(
         ]
     )
 
-
 def _safe_float(value: Any) -> float | None:
     if value is None or pd.isna(value):
         return None
     return float(value)
-
 
 def _training_mask(
     frame: pd.DataFrame,
@@ -115,7 +110,6 @@ def _training_mask(
     if int(mask.sum()) < min_training_rows:
         return pd.Series(True, index=frame.index)
     return mask
-
 
 class AnomalyJob:
     def __init__(
@@ -238,7 +232,7 @@ class AnomalyJob:
                     "gold_key": gold_key,
                 },
             )
-        except Exception as exc:  # noqa: BLE001 - garante manifest e status failure
+        except Exception as exc:  # noqa: ble001 - garante manifest e status failure
             fatal_error = exc
             status = "failed"
             error = str(exc)
@@ -482,7 +476,7 @@ class AnomalyJob:
         body = json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8")
         try:
             self.storage.write_bytes(summary.manifest_key, body)
-        except Exception:  # noqa: BLE001 - manifest nao pode mascarar o resultado
+        except Exception:  # noqa: ble001 - manifest nao pode mascarar o resultado
             logger.exception(
                 "falha ao gravar manifest de detect",
                 extra={"manifest_key": summary.manifest_key},

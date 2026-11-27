@@ -1,6 +1,6 @@
 """
 define o cliente do endpoint de chart do yahoo finance.
-duas classes: YahooError e YahooClient
+duas classes: yahooerror e yahooclient
 
 usado como fonte padrao por nao exigir token e permitir reproducao do projeto.
 o endpoint e nao oficial: por isso timeout, retry e validacao de contrato sao
@@ -17,16 +17,14 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-# UA curto e aceito pelo endpoint; UAs de browser completos tem sido
-# bloqueados com 429. Nao e uma API oficial: mantenha isso configuravel.
+# ua curto e aceito pelo endpoint; uas de browser completos tem sido
+# bloqueados com 429. nao e uma api oficial: mantenha isso configuravel.
 DEFAULT_USER_AGENT = "Mozilla/5.0"
-
 
 class YahooError(RuntimeError):
     def __init__(self, message: str, *, status_code: int | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
-
 
 class YahooClient:
     def __init__(

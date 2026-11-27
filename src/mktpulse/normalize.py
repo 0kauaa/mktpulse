@@ -1,8 +1,8 @@
-"""Normalizacao e validacao basica do payload OHLCV.
+"""normalizacao e validacao basica do payload ohlcv.
 
-Cada fonte tem seu formato; o contrato de saida e unico (QUOTES_COLUMNS).
-A qualidade "de verdade" (regras de negocio, outliers, comparacao entre fontes)
-fica para a Semana 2. Aqui garantimos tipos, unicidade por data e invariantes OHLC.
+cada fonte tem seu formato; o contrato de saida e unico (quotes_columns).
+a qualidade "de verdade" (regras de negocio, outliers, comparacao entre fontes)
+fica para a semana 2. aqui garantimos tipos, unicidade por data e invariantes ohlc.
 """
 
 from __future__ import annotations
@@ -50,10 +50,8 @@ QUOTES_SCHEMA = pa.schema(
     ]
 )
 
-
 class DataQualityError(ValueError):
     """O payload nao respeita o contrato minimo e nao deve entrar no normalized."""
-
 
 @dataclass(frozen=True)
 class _Context:
@@ -61,7 +59,6 @@ class _Context:
     run_id: str
     content_hash: str
     ingested_at: pd.Timestamp
-
 
 def _context(envelope: dict[str, Any]) -> _Context:
     ingested_at = pd.Timestamp(envelope["ingested_at"])
@@ -77,7 +74,6 @@ def _context(envelope: dict[str, Any]) -> _Context:
         ingested_at=ingested_at,
     )
 
-
 def _as_float(value: Any, *, field: str, symbol: str, position: int) -> float:
     if value is None:
         raise DataQualityError(f"{symbol}: campo {field} ausente na linha {position}")
@@ -89,7 +85,6 @@ def _as_float(value: Any, *, field: str, symbol: str, position: int) -> float:
         raise DataQualityError(f"{symbol}: campo {field} nao finito na linha {position}")
     return number
 
-
 def _as_volume(value: Any, *, symbol: str, position: int) -> int:
     if value is None:
         raise DataQualityError(f"{symbol}: campo volume ausente na linha {position}")
@@ -100,7 +95,6 @@ def _as_volume(value: Any, *, symbol: str, position: int) -> int:
     if volume < 0:
         raise DataQualityError(f"{symbol}: volume negativo na linha {position}")
     return volume
-
 
 def _make_row(
     *,
@@ -154,7 +148,6 @@ def _make_row(
         "content_hash": context.content_hash,
     }
 
-
 def normalize_envelope(envelope: dict[str, Any]) -> pd.DataFrame:
     payload = envelope.get("payload")
     if not isinstance(payload, dict):
@@ -180,7 +173,6 @@ def normalize_envelope(envelope: dict[str, Any]) -> pd.DataFrame:
     frame.attrs["rows_received"] = received
     frame.attrs["rows_skipped"] = skipped
     return frame[QUOTES_COLUMNS]
-
 
 def _normalize_brapi(
     envelope: dict[str, Any], payload: dict[str, Any], context: _Context
@@ -219,17 +211,15 @@ def _normalize_brapi(
         )
     return rows, symbol, len(history), 0
 
-
 def _at(values: Any, index: int) -> Any:
     if not isinstance(values, list) or index >= len(values):
         return None
     return values[index]
 
-
 def _normalize_yahoo(
     envelope: dict[str, Any], payload: dict[str, Any], context: _Context
 ) -> tuple[list[dict[str, Any]], str, int, int]:
-    # Contrato do raw: payload e o chart.result do ticker. Aceitamos o envelope
+    # contrato do raw: payload e o chart.result do ticker. aceitamos o envelope
     # completo do endpoint tambem, para facilitar replay de capturas manuais.
     if "chart" in payload:
         chart = payload.get("chart") or {}
@@ -269,8 +259,8 @@ def _normalize_yahoo(
         close = _at(quote.get("close"), position)
         volume = _at(quote.get("volume"), position)
 
-        # Barra incompleta (pregao em andamento, feriado, ativo suspenso):
-        # nao entra no historico diario. A contagem fica no manifest.
+        # barra incompleta (pregao em andamento, feriado, ativo suspenso):
+        # nao entra no historico diario. a contagem fica no manifest.
         if any(value is None for value in (open_, high, low, close, volume)):
             skipped += 1
             continue

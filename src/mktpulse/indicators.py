@@ -1,5 +1,5 @@
 """
-indicadores financeiros calculados com janelas do Spark.
+indicadores financeiros calculados com janelas do spark.
 
 as janelas sao por simbolo e ordenadas por data do pregao. o `min_periods`
 explicito evita que uma media movel de 20 dias apareca preenchida no primeiro
@@ -22,7 +22,6 @@ INDICATOR_COLUMNS = [
     "avg_volume_20d",
     "drawdown_60d",
 ]
-
 
 def add_indicators(frame: DataFrame) -> DataFrame:
     by_symbol = Window.partitionBy("symbol").orderBy("trade_date")

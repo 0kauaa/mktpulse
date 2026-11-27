@@ -1,8 +1,8 @@
 """
-regras de qualidade avaliadas em um DataFrame Spark.
+regras de qualidade avaliadas em um dataframe spark.
 
 cada regra devolve uma condicao que, quando verdadeira, representa uma linha
-violando o contrato. Regras `critical` bloqueiam a escrita do silver; regras
+violando o contrato. regras `critical` bloqueiam a escrita do silver; regras
 `warning` sao registradas no relatorio sem interromper o job.
 """
 
@@ -18,7 +18,6 @@ from pyspark.sql import functions as F
 
 Severity = Literal["critical", "warning"]
 
-
 @dataclass(frozen=True)
 class QualityContext:
     as_of: date
@@ -26,14 +25,12 @@ class QualityContext:
     max_gap_days: int = 5
     max_staleness_days: int = 5
 
-
 @dataclass(frozen=True)
 class QualityRule:
     name: str
     description: str
     severity: Severity
     condition: Callable[[DataFrame, QualityContext], Column]
-
 
 @dataclass
 class QualityRuleResult:
@@ -64,7 +61,6 @@ class QualityRuleResult:
             "sample": self.sample,
         }
 
-
 @dataclass
 class QualityReport:
     as_of: str
@@ -93,17 +89,14 @@ class QualityReport:
             "rules": [rule.to_dict() for rule in self.rules],
         }
 
-
 def _null_business_key(_frame: DataFrame, _context: QualityContext) -> Column:
     return F.col("symbol").isNull() | F.col("trade_date").isNull()
-
 
 def _invalid_price(_frame: DataFrame, _context: QualityContext) -> Column:
     condition = F.lit(False)
     for column in ("open", "high", "low", "close", "adjusted_close"):
         condition = condition | F.col(column).isNull() | (F.col(column) <= 0)
     return condition
-
 
 def _invalid_ohlc(_frame: DataFrame, _context: QualityContext) -> Column:
     return (
@@ -112,32 +105,25 @@ def _invalid_ohlc(_frame: DataFrame, _context: QualityContext) -> Column:
         | (F.col("low") > F.least("open", "close"))
     )
 
-
 def _negative_volume(_frame: DataFrame, _context: QualityContext) -> Column:
     return F.col("volume").isNull() | (F.col("volume") < 0)
-
 
 def _future_trade_date(_frame: DataFrame, context: QualityContext) -> Column:
     return F.col("trade_date") > F.lit(context.as_of)
 
-
 def _duplicate_business_key(_frame: DataFrame, _context: QualityContext) -> Column:
     return F.col("_business_key_count") > 1
-
 
 def _extreme_daily_return(_frame: DataFrame, context: QualityContext) -> Column:
     return F.abs(F.col("daily_return")) > F.lit(context.max_daily_return)
 
-
 def _calendar_gap(_frame: DataFrame, context: QualityContext) -> Column:
     return F.datediff("trade_date", F.col("_previous_trade_date")) > F.lit(context.max_gap_days)
-
 
 def _stale_symbol(_frame: DataFrame, context: QualityContext) -> Column:
     return F.datediff(F.lit(context.as_of), F.col("_latest_trade_date")) > F.lit(
         context.max_staleness_days
     )
-
 
 DEFAULT_RULES = (
     QualityRule(
@@ -196,7 +182,6 @@ DEFAULT_RULES = (
     ),
 )
 
-
 def evaluate_quality(
     frame: DataFrame,
     *,
@@ -246,7 +231,6 @@ def evaluate_quality(
         total_rows=total_rows,
         rules=results,
     )
-
 
 def _prepare_frame(frame: DataFrame) -> DataFrame:
     symbol_window = Window.partitionBy("symbol").orderBy("trade_date")

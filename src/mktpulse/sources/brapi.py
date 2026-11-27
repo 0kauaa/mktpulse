@@ -1,6 +1,6 @@
 """
 define o cliente da brapi.
-duas classes: BrapiError e BrapiClient
+duas classes: brapierror e brapiclient
 
 pontos operacionais:
 - retry com backoff exponencial para 429 e 5xx;

@@ -1,12 +1,10 @@
-"""Sessao Spark local usada pelos jobs da Semana 2."""
+"""sessao spark local usada pelos jobs da semana 2."""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-
 from pyspark.sql import SparkSession
-
 
 def build_spark_session(
     *,

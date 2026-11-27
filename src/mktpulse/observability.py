@@ -1,6 +1,6 @@
-"""Logs estruturados em JSON.
+"""logs estruturados em json.
 
-Cada linha de log carrega o run_id da execucao corrente. Isso e o que permite
+cada linha de log carrega o run_id da execucao corrente. isso e o que permite
 correlacionar uma execucao agendada com os objetos gravados no data lake.
 """
 
@@ -15,7 +15,6 @@ from datetime import UTC, datetime
 run_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("run_id", default="-")
 
 _STANDARD_KEYS = set(logging.makeLogRecord({}).__dict__) | {"asctime", "message"}
-
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -32,7 +31,6 @@ class JsonFormatter(logging.Formatter):
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
         return json.dumps(payload, ensure_ascii=False, default=str)
-
 
 def setup_logging(level: str = "INFO") -> None:
     root = logging.getLogger()

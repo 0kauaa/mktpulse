@@ -1,5 +1,5 @@
 """
-job Spark que constroi a camada silver a partir do normalized.
+job spark que constroi a camada silver a partir do normalized.
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ from .storage import Storage
 
 logger = logging.getLogger("mktpulse.silver")
 
-
 @dataclass
 class SilverSummary:
     run_id: str
@@ -56,7 +55,6 @@ class SilverSummary:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
 def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
     if symbols is None:
         return []
@@ -69,7 +67,6 @@ def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
             seen.add(ticker)
             normalized.append(ticker)
     return normalized
-
 
 def _quality_summary(report: QualityReport | None) -> dict[str, Any]:
     if report is None:
@@ -89,7 +86,6 @@ def _quality_summary(report: QualityReport | None) -> dict[str, Any]:
             for rule in report.rules
         ],
     }
-
 
 class SilverJob:
     def __init__(
@@ -215,7 +211,7 @@ class SilverJob:
                         "silver_path": str(output_path),
                     },
                 )
-        except Exception as exc:  # noqa: BLE001 - garante manifest e status failure
+        except Exception as exc:  # noqa: ble001 - garante manifest e status failure
             fatal_error = exc
             status = "failed"
             error = str(exc)
@@ -361,7 +357,7 @@ class SilverJob:
         body = json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8")
         try:
             self.storage.write_bytes(summary.manifest_key, body)
-        except Exception:  # noqa: BLE001 - manifest nao pode mascarar o resultado
+        except Exception:  # noqa: ble001 - manifest nao pode mascarar o resultado
             logger.exception(
                 "falha ao gravar manifest de transform",
                 extra={"manifest_key": summary.manifest_key},

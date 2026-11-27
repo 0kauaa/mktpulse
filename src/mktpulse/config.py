@@ -1,7 +1,7 @@
-"""Configuracao central do projeto.
+"""configuracao central do projeto.
 
-Tudo que muda entre ambientes entra por variavel de ambiente (prefixo MKT_).
-Segredos nunca ficam no codigo nem no .env versionado.
+tudo que muda entre ambientes entra por variavel de ambiente (prefixo mkt_).
+segredos nunca ficam no codigo nem no .env versionado.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -70,7 +69,6 @@ class Settings(BaseSettings):
     @property
     def brapi_token_value(self) -> str | None:
         return self.brapi_token.get_secret_value() if self.brapi_token else None
-
 
 @lru_cache
 def get_settings() -> Settings:

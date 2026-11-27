@@ -1,8 +1,8 @@
-"""Features para deteccao de anomalias no mercado.
+"""features para deteccao de anomalias no mercado.
 
-As features usam apenas informacao disponivel ate o pregao corrente: retornos,
-volatilidade passada, distancia de medias e comportamento de volume. Preco
-absoluto nao entra no modelo para nao comparar PETR4 com MGLU3 em escalas
+as features usam apenas informacao disponivel ate o pregao corrente: retornos,
+volatilidade passada, distancia de medias e comportamento de volume. preco
+absoluto nao entra no modelo para nao comparar petr4 com mglu3 em escalas
 diferentes.
 """
 
@@ -44,7 +44,6 @@ REQUIRED_COLUMNS = {
     "drawdown_60d",
 }
 
-
 def add_anomaly_features(frame: pd.DataFrame) -> pd.DataFrame:
     missing = REQUIRED_COLUMNS.difference(frame.columns)
     if missing:
@@ -72,7 +71,6 @@ def add_anomaly_features(frame: pd.DataFrame) -> pd.DataFrame:
     result["close_location"] = ((raw_close - low) / high_low.where(high_low > 0)).fillna(0.5)
 
     return result
-
 
 def prepare_features(frame: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     enriched = add_anomaly_features(frame)

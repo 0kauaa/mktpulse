@@ -1,6 +1,6 @@
-"""Pipeline de ingestao e replay da Semana 1.
+"""pipeline de ingestao e replay da semana 1.
 
-Garantias operacionais:
+garantias operacionais:
 - falha de um ticker nao derruba os demais (isolamento por simbolo);
 - landing raw idempotente por (dia, ticker, hash do payload);
 - normalized sempre deduplicado por (ticker, data do pregao), vencendo a
@@ -43,7 +43,6 @@ from .storage import Storage
 
 logger = logging.getLogger("mktpulse.pipeline")
 
-
 @dataclass
 class SymbolOutcome:
     symbol: str
@@ -57,7 +56,6 @@ class SymbolOutcome:
     raw_written: bool = False
     content_hash: str | None = None
     error: str | None = None
-
 
 @dataclass
 class RunSummary:
@@ -76,7 +74,6 @@ class RunSummary:
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
-
 def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
     if symbols is None:
         return []
@@ -90,10 +87,8 @@ def _normalize_symbols(symbols: Sequence[str] | str | None) -> list[str]:
             normalized.append(ticker)
     return normalized
 
-
 def _chunks(items: Sequence[str], size: int) -> list[list[str]]:
     return [list(items[index : index + size]) for index in range(0, len(items), size)]
-
 
 def _dedupe_quotes(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame[QUOTES_COLUMNS].copy()
@@ -101,13 +96,11 @@ def _dedupe_quotes(frame: pd.DataFrame) -> pd.DataFrame:
     frame = frame.drop_duplicates(subset=["symbol", "trade_date"], keep="last")
     return frame.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
 
-
 def _read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame | None:
     key = normalized_key(source, symbol)
     if not storage.exists(key):
         return None
     return pd.read_parquet(BytesIO(storage.read_bytes(key)))
-
 
 def read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame:
     frame = _read_snapshot(storage, source, symbol.upper())
@@ -116,7 +109,6 @@ def read_snapshot(storage: Storage, source: str, symbol: str) -> pd.DataFrame:
             f"snapshot normalizado nao encontrado para {symbol.upper()} em source={source}"
         )
     return frame
-
 
 class IngestionPipeline:
     def __init__(
@@ -170,7 +162,7 @@ class IngestionPipeline:
                     time.sleep(self.settings.request_pause_seconds)
                 try:
                     response = self.client.fetch_quotes(batch, range_=range_, interval=interval)
-                except Exception as exc:  # noqa: BLE001 - erro de batch vira erro por simbolo
+                except Exception as exc:  # noqa: ble001 - erro de batch vira erro por simbolo
                     logger.error(
                         "falha ao buscar lote",
                         extra={"symbols": batch, "error": str(exc)},
@@ -198,11 +190,11 @@ class IngestionPipeline:
                             interval=interval,
                             run_id=run_id,
                         )
-                    except Exception as exc:  # noqa: BLE001 - isolamento por simbolo
+                    except Exception as exc:  # noqa: ble001 - isolamento por simbolo
                         outcomes[symbol].status = "error"
                         outcomes[symbol].error = str(exc)
                         logger.exception("falha ao ingerir simbolo", extra={"symbol": symbol})
-        except Exception as exc:  # noqa: BLE001 - garante manifest em falha fatal
+        except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
             fatal_error = exc
             logger.exception("ingestao abortada")
         finally:
@@ -254,11 +246,11 @@ class IngestionPipeline:
             for symbol in target:
                 try:
                     outcomes[symbol] = self._rebuild_symbol(symbol, run_id=run_id)
-                except Exception as exc:  # noqa: BLE001 - isolamento por simbolo
+                except Exception as exc:  # noqa: ble001 - isolamento por simbolo
                     outcomes[symbol].status = "error"
                     outcomes[symbol].error = str(exc)
                     logger.exception("falha no rebuild do simbolo", extra={"symbol": symbol})
-        except Exception as exc:  # noqa: BLE001 - garante manifest em falha fatal
+        except Exception as exc:  # noqa: ble001 - garante manifest em falha fatal
             fatal_error = exc
             logger.exception("rebuild abortado")
         finally:
@@ -330,7 +322,7 @@ class IngestionPipeline:
             outcome.rows_skipped = int(normalized.attrs.get("rows_skipped", 0))
             outcome.rows_written = len(normalized)
             outcome.rows_stored = self._merge_and_write(symbol, normalized)
-        except Exception as exc:  # noqa: BLE001 - raw fica preservado para diagnostico
+        except Exception as exc:  # noqa: ble001 - raw fica preservado para diagnostico
             outcome.status = "error"
             outcome.error = str(exc)
             logger.exception(
@@ -378,7 +370,7 @@ class IngestionPipeline:
             try:
                 envelope = decode_envelope(self.storage.read_bytes(key))
                 frames.append(normalize_envelope(envelope))
-            except Exception as exc:  # noqa: BLE001 - agrega erros para nao sobrescrever snapshot
+            except Exception as exc:  # noqa: ble001 - agrega erros para nao sobrescrever snapshot
                 errors.append(f"{key}: {exc}")
                 logger.error(
                     "raw invalido durante rebuild", extra={"raw_key": key, "error": str(exc)}
@@ -462,7 +454,7 @@ class IngestionPipeline:
         body = json.dumps(manifest, indent=2, ensure_ascii=False, default=str).encode("utf-8")
         try:
             self.storage.write_bytes(summary.manifest_key, body)
-        except Exception:  # noqa: BLE001 - manifest nao pode mascarar o resultado
+        except Exception:  # noqa: ble001 - manifest nao pode mascarar o resultado
             logger.exception(
                 "falha ao gravar manifest", extra={"manifest_key": summary.manifest_key}
             )

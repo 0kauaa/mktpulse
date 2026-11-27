@@ -1,18 +1,18 @@
-"""Layout do data lake e contrato dos objetos gravados.
+"""layout do data lake e contrato dos objetos gravados.
 
-Layout:
-    raw/source=yahoo/endpoint=quote/ingestion_date=YYYY-MM-DD/symbol=PETR4/part-<hash>.json.gz
-    normalized/source=yahoo/table=quotes/symbol=PETR4/quotes.parquet
-    _ops/runs/ingestion_date=YYYY-MM-DD/run_id=<id>/manifest.json
+layout:
+    raw/source=yahoo/endpoint=quote/ingestion_date=yyyy-mm-dd/symbol=petr4/part-<hash>.json.gz
+    normalized/source=yahoo/table=quotes/symbol=petr4/quotes.parquet
+    _ops/runs/ingestion_date=yyyy-mm-dd/run_id=<id>/manifest.json
 
-Decisoes:
-- A camada raw e imutavel e append-only. Ela e a fonte da verdade.
-- A chave inclui o hash do payload: reprocessar o mesmo dado no mesmo dia
+decisoes:
+- a camada raw e imutavel e append-only. ela e a fonte da verdade.
+- a chave inclui o hash do payload: reprocessar o mesmo dado no mesmo dia
   sobrescreve exatamente a mesma chave (idempotencia no landing).
-- A camada normalized e derivada; pode ser reconstruida a partir do raw.
+- a camada normalized e derivada; pode ser reconstruida a partir do raw.
 - `source` participa do path: trocar de fonte nao mistura universos de dados.
-- A particao ingestion_date preserva "quando chegou", nao so "a que dia se refere".
-  Isso permite auditar dado atrasado ou corrigido.
+- a particao ingestion_date preserva "quando chegou", nao so "a que dia se refere".
+  isso permite auditar dado atrasado ou corrigido.
 """
 
 from __future__ import annotations
@@ -167,7 +167,6 @@ def build_envelope(
         "payload": payload,
     }
 
-
 def encode_envelope(envelope: dict[str, Any]) -> bytes:
     # mtime=0 deixa o gzip deterministico: mesmo envelope -> mesmos bytes.
     return gzip.compress(canonical_json(envelope), compresslevel=6, mtime=0)
@@ -185,7 +184,6 @@ def decode_envelope(data: bytes) -> dict[str, Any]:
     ):
         raise ValueError("raw envelope sem payload/content_hash")
     return envelope
-
 
 def date_from_epoch(value: Any) -> date:
     """Converte o epoch da brapi para a data do pregao em Sao Paulo.
@@ -205,7 +203,6 @@ def date_from_epoch(value: Any) -> date:
     return (
         datetime.fromtimestamp(timestamp, tz=UTC).astimezone(ZoneInfo("America/Sao_Paulo")).date()
     )
-
 
 def _json_default(value: Any) -> str:
     if isinstance(value, (datetime, date)):

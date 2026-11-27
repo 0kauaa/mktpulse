@@ -1,11 +1,11 @@
-"""CLI do mktpulse.
+"""cli do mktpulse.
 
-Codigos de saida:
+codigos de saida:
     0 = sucesso
     1 = sucesso parcial (algum ticker falhou)
     2 = falha (nada gravado, configuracao invalida ou erro fatal)
 
-Esses codigos sao o contrato com o agendador (cron, Airflow, EventBridge).
+esses codigos sao o contrato com o agendador (cron, airflow, eventbridge).
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ from .storage import create_storage
 logger = logging.getLogger("mktpulse.cli")
 
 EXIT_CODES = {"success": 0, "partial": 1, "failed": 2}
-
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -88,7 +87,6 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--symbol", required=True)
     return parser
 
-
 def _print_summary(summary: RunSummary, as_json: bool) -> None:
     if as_json:
         print(json.dumps(summary.to_dict(), indent=2, ensure_ascii=False, default=str))
@@ -121,7 +119,6 @@ def _print_summary(summary: RunSummary, as_json: bool) -> None:
         if outcome.status != "ok":
             print(f"  ERRO {symbol}: {outcome.error}")
 
-
 def _print_snapshot(source: str, symbol: str, frame: Any) -> None:
     columns = [
         "trade_date",
@@ -139,7 +136,6 @@ def _print_snapshot(source: str, symbol: str, frame: Any) -> None:
     print(f"periodo: {frame['trade_date'].min()} -> {frame['trade_date'].max()}")
     print("ultimas linhas:")
     print(frame[columns].tail(5).to_string(index=False))
-
 
 def _print_transform_summary(summary: SilverSummary, as_json: bool) -> None:
     if as_json:
@@ -172,7 +168,6 @@ def _print_transform_summary(summary: SilverSummary, as_json: bool) -> None:
     if summary.error:
         print(f"erro:      {summary.error}")
 
-
 def _print_benchmark(result: dict[str, Any], as_json: bool) -> None:
     if as_json:
         print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
@@ -189,7 +184,6 @@ def _print_benchmark(result: dict[str, Any], as_json: bool) -> None:
     )
     print(f"speedup:   pandas={result['pandas_speedup']}x spark")
     print(f"artefato:  {result['artifact']}")
-
 
 def _print_anomaly_summary(summary: AnomalySummary, as_json: bool) -> None:
     if as_json:
@@ -224,7 +218,6 @@ def _print_anomaly_summary(summary: AnomalySummary, as_json: bool) -> None:
         )
     if summary.error:
         print(f"erro:      {summary.error}")
-
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
@@ -303,11 +296,10 @@ def main(argv: list[str] | None = None) -> int:
 
         logger.error("comando desconhecido", extra={"command": args.command})
         return 2
-    except Exception as exc:  # noqa: BLE001 - fronteira da CLI
+    except Exception as exc:  # noqa: ble001 - fronteira da cli
         logger.exception("comando falhou")
         print(f"erro: {exc}", file=sys.stderr)
         return 2
-
 
 def _load_settings(log_level: str | None) -> Settings:
     settings = get_settings()
