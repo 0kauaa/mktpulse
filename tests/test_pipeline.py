@@ -12,7 +12,6 @@ from mktpulse.sources.brapi import BrapiError
 from mktpulse.storage.local import LocalStorage
 from tests.conftest import FIXED_NOW, make_result, quote_row
 
-
 class FakeBrapiClient:
     def __init__(self, results: dict[str, dict[str, Any]], failing: set[str] | None = None) -> None:
         self.results = results
@@ -27,7 +26,6 @@ class FakeBrapiClient:
             raise BrapiError("falha simulada de rede")
         return {symbol: self.results[symbol] for symbol in symbols}
 
-
 def build_pipeline(
     settings,
     results: dict[str, dict[str, Any]],
@@ -41,10 +39,8 @@ def build_pipeline(
     pipeline = IngestionPipeline(settings, client, storage, now=lambda: now)
     return pipeline, storage, client
 
-
 def raw_keys(storage: LocalStorage) -> list[str]:
     return storage.list("raw/")
-
 
 def test_ingest_writes_raw_and_normalized(settings) -> None:
     results = {"PETR4": make_result("PETR4"), "VALE3": make_result("VALE3")}
@@ -59,7 +55,6 @@ def test_ingest_writes_raw_and_normalized(settings) -> None:
     assert len(raw_keys(storage)) == 2
     assert len(read_snapshot(storage, "brapi", "PETR4")) == 2
     assert len(read_snapshot(storage, "brapi", "VALE3")) == 2
-
 
 def test_rerun_is_idempotent_at_the_raw_layer(settings) -> None:
     results = {"PETR4": make_result("PETR4"), "VALE3": make_result("VALE3")}
@@ -76,7 +71,6 @@ def test_rerun_is_idempotent_at_the_raw_layer(settings) -> None:
     assert raw_keys(storage) == keys_before
     assert len(read_snapshot(storage, "brapi", "PETR4")) == 2
 
-
 def test_late_row_is_merged_by_business_key(settings) -> None:
     results = {"PETR4": make_result("PETR4")}
     pipeline, storage, _ = build_pipeline(settings, results)
@@ -91,7 +85,6 @@ def test_late_row_is_merged_by_business_key(settings) -> None:
     frame = read_snapshot(storage, "brapi", "PETR4")
     assert len(frame) == 3
     assert frame["trade_date"].max() == date(2026, 1, 6)
-
 
 def test_failure_is_isolated_per_symbol(settings) -> None:
     isolated = settings.model_copy(update={"brapi_batch_size": 1})
@@ -117,7 +110,6 @@ def test_failure_is_isolated_per_symbol(settings) -> None:
     assert manifest["operation"] == "ingest"
     assert manifest["symbols"]["BAD"]["status"] == "error"
 
-
 def test_raw_is_preserved_when_normalization_fails(settings) -> None:
     bad_row = quote_row(date(2026, 1, 2), high=11.0, close=12.0)
     results = {"PETR4": make_result("PETR4", rows=[bad_row])}
@@ -133,7 +125,6 @@ def test_raw_is_preserved_when_normalization_fails(settings) -> None:
     assert storage.exists(outcome.raw_key)
     assert not storage.exists(normalized_key("brapi", "PETR4"))
     assert "OHLC inconsistente" in (outcome.error or "")
-
 
 def test_rebuild_recreates_normalized_from_raw(settings) -> None:
     results = {"PETR4": make_result("PETR4")}
@@ -151,7 +142,6 @@ def test_rebuild_recreates_normalized_from_raw(settings) -> None:
     manifest = json.loads(storage.read_bytes(summary.manifest_key))
     assert manifest["operation"] == "rebuild"
 
-
 def test_rebuild_discovers_symbols(settings) -> None:
     results = {"PETR4": make_result("PETR4"), "VALE3": make_result("VALE3")}
     pipeline, _, _ = build_pipeline(settings, results)
@@ -161,7 +151,6 @@ def test_rebuild_discovers_symbols(settings) -> None:
 
     assert summary.status == "success"
     assert set(summary.symbols) == {"PETR4", "VALE3"}
-
 
 def test_corrupt_raw_does_not_overwrite_snapshot(settings) -> None:
     results = {"PETR4": make_result("PETR4")}

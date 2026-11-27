@@ -12,7 +12,6 @@ from tests.conftest import make_quotes_frame, write_normalized
 
 FIXED_NOW = datetime(2026, 1, 20, 12, 0, tzinfo=UTC)
 
-
 def test_transform_writes_partitioned_silver_and_is_idempotent(spark, settings) -> None:
     frame = pd.concat(
         [make_quotes_frame("PETR4", days=10), make_quotes_frame("VALE3", days=10)],
@@ -49,7 +48,6 @@ def test_transform_writes_partitioned_silver_and_is_idempotent(spark, settings) 
     assert report["total_rows"] == 20
     assert report["status"] == "success"
 
-
 def test_critical_quality_failure_does_not_write_silver(spark, settings) -> None:
     frame = make_quotes_frame("PETR4", days=5, bad=True)
     write_normalized(settings.lake_root, "brapi", frame)
@@ -67,7 +65,6 @@ def test_critical_quality_failure_does_not_write_silver(spark, settings) -> None
     assert manifest["status"] == "failed"
     assert manifest["quality"]["critical_failures"] >= 1
     assert report["status"] == "failed"
-
 
 def test_full_refresh_removes_stale_silver_partition(spark, settings) -> None:
     frame = pd.concat(

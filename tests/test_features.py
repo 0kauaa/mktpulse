@@ -6,7 +6,6 @@ import pytest
 
 from mktpulse.features import FEATURE_COLUMNS, add_anomaly_features, prepare_features
 
-
 def _feature_frame() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -29,7 +28,6 @@ def _feature_frame() -> pd.DataFrame:
         }
     )
 
-
 def test_add_anomaly_features_calculates_scale_free_features() -> None:
     result = add_anomaly_features(_feature_frame())
 
@@ -39,7 +37,6 @@ def test_add_anomaly_features_calculates_scale_free_features() -> None:
     assert result.loc[1, "volume_ratio_20d"] == pytest.approx(0.5)
     assert result.loc[0, "range_pct"] == pytest.approx(0.2)
     assert result.loc[1, "close_location"] == pytest.approx(0.8)
-
 
 def test_prepare_features_drops_incomplete_and_non_finite_rows() -> None:
     frame = _feature_frame()

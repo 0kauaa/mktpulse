@@ -11,7 +11,6 @@ from dashboard.data import (
     top_anomalies,
 )
 
-
 def _silver() -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -27,7 +26,6 @@ def _silver() -> pd.DataFrame:
         }
     )
 
-
 def test_merge_anomalies_keeps_silver_rows_and_flags() -> None:
     silver = _silver().drop(columns=["is_anomaly", "anomaly_score"])
     gold = _silver()[["symbol", "trade_date", "is_anomaly", "anomaly_score"]]
@@ -37,7 +35,6 @@ def test_merge_anomalies_keeps_silver_rows_and_flags() -> None:
     assert len(merged) == 3
     assert merged.loc[merged["trade_date"] == "2026-10-26", "is_anomaly"].sum() == 1
 
-
 def test_merge_anomalies_without_gold_marks_everything_false() -> None:
     merged = merge_anomalies(
         _silver().drop(columns=["is_anomaly", "anomaly_score"]), pd.DataFrame()
@@ -45,7 +42,6 @@ def test_merge_anomalies_without_gold_marks_everything_false() -> None:
 
     assert not merged["is_anomaly"].any()
     assert merged["anomaly_score"].isna().all()
-
 
 def test_summary_and_top_anomalies() -> None:
     frame = _silver()
@@ -59,7 +55,6 @@ def test_summary_and_top_anomalies() -> None:
     assert len(top) == 1
     assert top.iloc[0]["symbol"] == "PETR4"
     assert top.iloc[0]["anomaly_score"] == pytest.approx(0.9)
-
 
 def test_filter_period_and_paths(tmp_path) -> None:
     frame = _silver()

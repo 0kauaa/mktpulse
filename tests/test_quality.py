@@ -9,11 +9,9 @@ from mktpulse.quality import evaluate_quality
 from mktpulse.spark_schemas import QUOTES_SPARK_SCHEMA
 from tests.conftest import make_quotes_frame
 
-
 def _quality_frame(spark, frame: pd.DataFrame):
     bronze = spark.createDataFrame(frame, schema=QUOTES_SPARK_SCHEMA)
     return add_indicators(bronze)
-
 
 def test_clean_quotes_pass_all_critical_rules(spark) -> None:
     frame = make_quotes_frame("PETR4", days=20)
@@ -26,7 +24,6 @@ def test_clean_quotes_pass_all_critical_rules(spark) -> None:
     assert report.total_rows == 20
     assert report.critical_failures == 0
     assert all(rule.passed for rule in report.rules if rule.severity == "critical")
-
 
 def test_invalid_ohlc_and_duplicate_key_block_the_silver(spark) -> None:
     frame = make_quotes_frame("PETR4", days=5, bad=True)
@@ -41,7 +38,6 @@ def test_invalid_ohlc_and_duplicate_key_block_the_silver(spark) -> None:
     assert rules["duplicate_business_key"].sample
     assert all(not key.startswith("_") for key in rules["duplicate_business_key"].sample[0])
 
-
 def test_future_trade_date_is_critical(spark) -> None:
     frame = make_quotes_frame("PETR4", days=2)
 
@@ -50,7 +46,6 @@ def test_future_trade_date_is_critical(spark) -> None:
 
     assert report.status == "failed"
     assert rules["future_trade_date"].failed_rows == 2
-
 
 def test_stale_symbol_is_only_a_warning(spark) -> None:
     frame = make_quotes_frame("PETR4", days=5)

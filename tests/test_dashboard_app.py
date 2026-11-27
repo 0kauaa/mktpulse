@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-
 import pandas as pd
 from streamlit.testing.v1 import AppTest
-
 
 def test_dashboard_renders_with_silver_and_gold(tmp_path, monkeypatch) -> None:
     lake = tmp_path / "lake"

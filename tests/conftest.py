@@ -18,10 +18,8 @@ from mktpulse.normalize import QUOTES_COLUMNS, QUOTES_SCHEMA
 B3_TZ = ZoneInfo("America/Sao_Paulo")
 FIXED_NOW = datetime(2026, 11, 17, 15, 30, tzinfo=UTC)
 
-
 def epoch(day: date) -> int:
     return int(datetime.combine(day, time(0), tzinfo=B3_TZ).timestamp())
-
 
 def quote_row(
     day: date,
@@ -44,7 +42,6 @@ def quote_row(
         "adjustedClose": close if adjusted is None else adjusted,
     }
 
-
 def make_result(
     symbol: str = "PETR4", rows: list[dict[str, Any]] | None = None, *, currency: str = "BRL"
 ) -> dict[str, Any]:
@@ -58,7 +55,6 @@ def make_result(
         "historicalDataPrice": rows,
     }
 
-
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     return Settings(
@@ -70,7 +66,6 @@ def settings(tmp_path) -> Settings:
         request_pause_seconds=0,
         symbols="PETR4,VALE3",
     )
-
 
 def make_quotes_frame(
     symbol: str = "PETR4",
@@ -107,13 +102,11 @@ def make_quotes_frame(
         )
     return pd.DataFrame(rows, columns=QUOTES_COLUMNS)
 
-
 def write_normalized(root: Path, source: str, frame: pd.DataFrame) -> None:
     for symbol, group in frame.groupby("symbol"):
         path = root / normalized_key(source, symbol)
         path.parent.mkdir(parents=True, exist_ok=True)
         group.to_parquet(path, index=False, schema=QUOTES_SCHEMA)
-
 
 def make_silver_frame(
     symbol: str = "PETR4",
@@ -165,12 +158,10 @@ def make_silver_frame(
     )
     return frame
 
-
 def write_silver(root: Path, source: str, frame: pd.DataFrame) -> None:
     path = root / silver_prefix(source)
     path.mkdir(parents=True, exist_ok=True)
     frame.to_parquet(path, partition_cols=["symbol"], index=False)
-
 
 @pytest.fixture(scope="session")
 def spark(tmp_path_factory):

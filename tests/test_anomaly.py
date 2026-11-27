@@ -11,11 +11,9 @@ from mktpulse.lake import gold_prefix, model_key
 from mktpulse.storage.local import LocalStorage
 from tests.conftest import FIXED_NOW, make_silver_frame, write_silver
 
-
 def _job(settings) -> tuple[AnomalyJob, LocalStorage]:
     storage = LocalStorage(settings.lake_root)
     return AnomalyJob(settings, storage, now=lambda: FIXED_NOW), storage
-
 
 def test_detect_writes_gold_model_and_metrics(settings) -> None:
     frame = pd.concat(
@@ -55,7 +53,6 @@ def test_detect_writes_gold_model_and_metrics(settings) -> None:
     )
     assert metadata["run_id"] == "detect-1"
     assert metadata["model_key"] == model_key("detect-1")
-
 
 def test_detect_uses_time_based_holdout_when_enough_rows(settings) -> None:
     tuned = settings.model_copy(update={"anomaly_min_training_rows": 50})

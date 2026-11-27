@@ -7,7 +7,6 @@ import pytest
 from mktpulse.indicators import add_indicators
 from mktpulse.spark_schemas import QUOTES_SPARK_SCHEMA
 
-
 def _spark_quotes(spark, closes: list[float]):
     rows = [
         (
@@ -30,7 +29,6 @@ def _spark_quotes(spark, closes: list[float]):
 
     return spark.createDataFrame(rows, schema=QUOTES_SPARK_SCHEMA)
 
-
 def test_daily_return_and_window_min_periods(spark) -> None:
     closes = [100.0 + index for index in range(25)]
 
@@ -48,7 +46,6 @@ def test_daily_return_and_window_min_periods(spark) -> None:
     assert result[24].log_return == pytest.approx(__import__("math").log(closes[24] / closes[23]))
     assert result[24].sma_50 is None
     assert result[24].drawdown_60d is None
-
 
 def test_indicators_are_partitioned_by_symbol(spark) -> None:
     first = (100.0, 101.0)
