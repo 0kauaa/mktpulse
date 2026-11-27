@@ -1,4 +1,4 @@
-"""Leitura e transformacoes usadas pelo dashboard."""
+"""leitura e transformacoes usadas pelo dashboard."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from typing import Any
 
 import pandas as pd
 
-
 def lake_paths(lake_root: str | Path, source: str) -> tuple[Path, Path, Path]:
     root = Path(lake_root)
     silver = root / f"silver/source={source}/table=quotes"
@@ -16,12 +15,10 @@ def lake_paths(lake_root: str | Path, source: str) -> tuple[Path, Path, Path]:
     metadata = gold / "_metadata.json"
     return silver, gold, metadata
 
-
 def load_silver(path: Path) -> pd.DataFrame:
     frame = pd.read_parquet(path)
     frame["trade_date"] = pd.to_datetime(frame["trade_date"])
     return frame.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
-
 
 def load_gold(path: Path) -> pd.DataFrame:
     if not path.exists() or next(path.rglob("*.parquet"), None) is None:
@@ -30,13 +27,11 @@ def load_gold(path: Path) -> pd.DataFrame:
     frame["trade_date"] = pd.to_datetime(frame["trade_date"])
     return frame.sort_values(["symbol", "trade_date"]).reset_index(drop=True)
 
-
 def load_metadata(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
-
 
 def merge_anomalies(silver: pd.DataFrame, gold: pd.DataFrame) -> pd.DataFrame:
     result = silver.copy()
@@ -58,7 +53,6 @@ def merge_anomalies(silver: pd.DataFrame, gold: pd.DataFrame) -> pd.DataFrame:
     result["is_anomaly"] = result["is_anomaly"].eq(True)
     return result
 
-
 def summarize_symbols(frame: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for symbol, group in frame.groupby("symbol", sort=True, observed=True):
@@ -74,7 +68,6 @@ def summarize_symbols(frame: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
-
 
 def top_anomalies(frame: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
     anomalies = frame[frame["is_anomaly"]].copy()
@@ -94,7 +87,6 @@ def top_anomalies(frame: pd.DataFrame, limit: int = 20) -> pd.DataFrame:
         if column in anomalies.columns
     ]
     return anomalies.sort_values("anomaly_score", ascending=False).head(limit)[columns]
-
 
 def filter_period(
     frame: pd.DataFrame,

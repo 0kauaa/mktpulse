@@ -1,4 +1,4 @@
-"""Dashboard Streamlit do MarketPulse."""
+"""dashboard streamlit do marketpulse."""
 
 from __future__ import annotations
 

@@ -1,1 +1,1 @@
-"""Dashboard do MarketPulse."""
+"""dashboard do marketpulse."""
