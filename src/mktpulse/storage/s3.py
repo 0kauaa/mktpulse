@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .base import validate_key
 
-
 class S3Storage:
     """Storage de objetos em S3 (ou MinIO/LocalStack via endpoint_url).
 
@@ -47,7 +46,7 @@ class S3Storage:
         try:
             self._client.head_object(Bucket=self.bucket, Key=self._key(key))
             return True
-        except Exception as exc:  # noqa: BLE001 - boto3 tem varias classes de erro
+        except Exception as exc:  # noqa: ble001 - boto3 tem varias classes de erro
             code = getattr(exc, "response", {}).get("Error", {}).get("Code", "")
             if code in {"404", "NoSuchKey", "NotFound"}:
                 return False
